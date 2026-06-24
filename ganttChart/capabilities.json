@@ -1,0 +1,94 @@
+{
+    "dataRoles": [
+        {
+            "displayName": "Location",
+            "name": "location",
+            "kind": "Grouping",
+            "description": "Location hierarchy (city or region)"
+        },
+        {
+            "displayName": "Project Name",
+            "name": "projectName",
+            "kind": "Grouping",
+            "description": "Project name or ID"
+        },
+        {
+            "displayName": "CAPP Execution Start",
+            "name": "cappExecutionStart",
+            "kind": "GroupingOrMeasure",
+            "description": "CAPP Execution Start milestone date"
+        },
+        {
+            "displayName": "CAPP Funding FY Date",
+            "name": "cappFundingFYDate",
+            "kind": "GroupingOrMeasure",
+            "description": "CAPP Funding Fiscal Year milestone date"
+        },
+        {
+            "displayName": "CAPP Planning Start",
+            "name": "cappPlanningStart",
+            "kind": "GroupingOrMeasure",
+            "description": "CAPP Planning Start milestone date"
+        },
+        {
+            "displayName": "Maximo Schedule Start",
+            "name": "maximoStart",
+            "kind": "GroupingOrMeasure",
+            "description": "Maximo Schedule Start date"
+        },
+        {
+            "displayName": "Maximo Schedule Finish",
+            "name": "maximoFinish",
+            "kind": "GroupingOrMeasure",
+            "description": "Maximo Schedule Finish date"
+        },
+        {
+            "displayName": "P6 Start Date",
+            "name": "p6Start",
+            "kind": "GroupingOrMeasure",
+            "description": "P6 Schedule Start date"
+        },
+        {
+            "displayName": "P6 Finish Date",
+            "name": "p6Finish",
+            "kind": "GroupingOrMeasure",
+            "description": "P6 Schedule Finish date"
+        }
+    ],
+    "dataViewMappings": [
+        {
+            "table": {
+                "rows": {
+                    "select": [
+                        { "for": { "in": "location" } },
+                        { "for": { "in": "projectName" } },
+                        { "for": { "in": "cappExecutionStart" } },
+                        { "for": { "in": "cappFundingFYDate" } },
+                        { "for": { "in": "cappPlanningStart" } },
+                        { "for": { "in": "maximoStart" } },
+                        { "for": { "in": "maximoFinish" } },
+                        { "for": { "in": "p6Start" } },
+                        { "for": { "in": "p6Finish" } }
+                    ],
+                    "dataReductionAlgorithm": {
+                        "top": { "count": 2000 }
+                    }
+                }
+            }
+        }
+    ],
+    "objects": {
+        "ganttConfig": {
+            "properties": {
+                "p6BarColor":        { "type": { "fill": { "solid": { "color": true } } } },
+                "maximoBarColor":    { "type": { "fill": { "solid": { "color": true } } } },
+                "cappExecColor":     { "type": { "fill": { "solid": { "color": true } } } },
+                "cappFundingColor":  { "type": { "fill": { "solid": { "color": true } } } },
+                "cappPlanningColor": { "type": { "fill": { "solid": { "color": true } } } },
+                "bgColor":           { "type": { "fill": { "solid": { "color": true } } } },
+                "textColor":         { "type": { "fill": { "solid": { "color": true } } } }
+            }
+        }
+    },
+    "privileges": []
+}

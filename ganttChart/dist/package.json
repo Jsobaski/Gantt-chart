@@ -1,0 +1,17 @@
+{
+		"version": "1.0.0.0",
+		"author": {"name":"jsobaski","email":"josephsobaski@gmail.com"},
+		"resources": [
+			{
+				"resourceId": "rId0",
+				"sourceType": 5,
+				"file": "resources/ganttChartAFAE280F717B4FD282CFCC47143C86C3.pbiviz.json"
+			}
+		],
+		"visual": {"name":"ganttChart","displayName":"CAPP Gantt Chart","guid":"ganttChartAFAE280F717B4FD282CFCC47143C86C3","visualClassName":"Visual","version":"1.0.0.0","description":"Gantt chart showing P6 and Maximo schedule bars with CAPP milestone markers, grouped by Location and Project Name.","supportUrl":"https://github.com/jsobaski/gantt-chart","gitHubUrl":""},
+		"metadata": {
+			"pbivizjson": {
+				"resourceId": "rId0"
+			}
+		}
+	}
