@@ -457,12 +457,24 @@ export class Visual implements IVisual {
         controls.appendChild(resetBtn);
         outer.appendChild(controls);
 
+        // Native date inputs fire "change" on every keystroke once all segments
+        // have a value (not just on blur/Enter), so typing a new year digit-by-digit
+        // briefly produces incomplete years (e.g. "0002"). Debounce the commit so
+        // only the settled value after a typing pause triggers a re-render, and
+        // reject out-of-range years so a transient partial value is ignored.
+        let dateDebounceTimer: number | undefined;
+        const isPlausibleYear = (d: Date) => d.getFullYear() >= 1900 && d.getFullYear() <= 2200;
         const onDateChange = () => {
-            const f = fromInput.valueAsDate;
-            const t = toInput.valueAsDate;
-            if (f) this.userDateFrom = f;
-            if (t) this.userDateTo = t;
-            this.render(viewport);
+            if (dateDebounceTimer !== undefined) {
+                window.clearTimeout(dateDebounceTimer);
+            }
+            dateDebounceTimer = window.setTimeout(() => {
+                const f = fromInput.valueAsDate;
+                const t = toInput.valueAsDate;
+                if (f && isPlausibleYear(f)) this.userDateFrom = f;
+                if (t && isPlausibleYear(t)) this.userDateTo = t;
+                this.render(viewport);
+            }, 600);
         };
         fromInput.addEventListener("change", onDateChange);
         toInput.addEventListener("change", onDateChange);
