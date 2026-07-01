@@ -129,32 +129,85 @@ export class Visual implements IVisual {
         this.textColor = s.textColor.value.value || this.textColor;
     }
 
-    private parseDate(val: powerbi.PrimitiveValue): Date | null {
+    private parseSingleValue(val: powerbi.PrimitiveValue): Date | null {
         if (val === null || val === undefined || val === "") return null;
         if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
         if (typeof val === "number") {
-            // Power BI sends OLE Automation dates (days since Dec 30 1899) for Date columns
-            // and Unix ms for DateTime columns. OLE dates are < ~90000 for modern dates.
-            let d: Date;
+            if (!Number.isFinite(val)) return null;
             if (val > 1e10) {
-                d = new Date(val);
-            } else {
-                const OLE_EPOCH = -2209161600000; // new Date(1899,11,30).getTime()
-                d = new Date(OLE_EPOCH + val * 86400000);
+                // Unix millisecond timestamp
+                const d = new Date(val);
+                return isNaN(d.getTime()) ? null : d;
             }
-            return isNaN(d.getTime()) ? null : d;
+            if (Number.isInteger(val) && val >= 1900 && val <= 2100) {
+                // Year-only integer from a date hierarchy — use Jan 1 of that year
+                return new Date(val, 0, 1);
+            }
+            if (val >= 1) {
+                // OLE Automation date (days since Dec 30, 1899 UTC)
+                const d = new Date(-2209161600000 + val * 86400000);
+                return isNaN(d.getTime()) ? null : d;
+            }
+            return null;
         }
         const d = new Date(String(val));
         return isNaN(d.getTime()) ? null : d;
+    }
+
+    // Handles both raw date columns and Power BI date hierarchies (Year/Quarter/Month/Day).
+    private getDateForRole(
+        row: powerbi.DataViewTableRow,
+        columns: powerbi.DataViewMetadataColumn[],
+        role: string
+    ): Date | null {
+        const matches: Array<{idx: number; name: string}> = [];
+        (columns || []).forEach((col, idx) => {
+            if (col.roles?.[role]) {
+                matches.push({ idx, name: (col.displayName || col.queryName || "").toLowerCase() });
+            }
+        });
+
+        if (matches.length === 0) return null;
+
+        // Single column: raw date value (Date object, OLE float, Unix ms, or ISO string)
+        if (matches.length === 1) {
+            return this.parseSingleValue(row[matches[0].idx]);
+        }
+
+        // Multiple columns = date hierarchy expanded by Power BI (Year, Quarter, Month, Day)
+        // Reconstruct the full date from available components.
+        let year: number | null = null;
+        let month: number | null = null;
+        let day: number | null = null;
+
+        for (const { idx, name } of matches) {
+            const v = row[idx];
+            if (v === null || v === undefined) continue;
+            const n = Number(v);
+            if (isNaN(n) || !Number.isFinite(n)) continue;
+            if (name.endsWith("year")) year = n;
+            else if (name.endsWith("month")) month = n;
+            else if (name.endsWith("day") && !name.includes("week")) day = n;
+        }
+
+        if (year !== null) {
+            const date = new Date(year, month !== null ? month - 1 : 0, day !== null ? day : 1);
+            return isNaN(date.getTime()) ? null : date;
+        }
+
+        // Fallback: try the first matched column as a raw value
+        return this.parseSingleValue(row[matches[0].idx]);
     }
 
     private parseRows(dataView: DataView): GanttRow[] {
         const table = dataView.table;
         if (!table?.rows?.length) return [];
 
-        // Map role name -> first column index that has that role
+        const columns = table.columns || [];
+
+        // Text fields: still use first-column-per-role map
         const colMap: Record<string, number> = {};
-        (table.columns || []).forEach((col, i) => {
+        columns.forEach((col, i) => {
             Object.keys(col.roles || {}).forEach(role => {
                 if (colMap[role] === undefined) colMap[role] = i;
             });
@@ -167,10 +220,8 @@ export class Visual implements IVisual {
             return v !== null && v !== undefined ? String(v).trim() : "";
         };
 
-        const getDate = (row: powerbi.DataViewTableRow, role: string): Date | null => {
-            const idx = colMap[role];
-            return idx !== undefined ? this.parseDate(row[idx]) : null;
-        };
+        const getDate = (row: powerbi.DataViewTableRow, role: string): Date | null =>
+            this.getDateForRole(row, columns, role);
 
         const rows: GanttRow[] = [];
         table.rows.forEach(row => {
@@ -186,7 +237,6 @@ export class Visual implements IVisual {
             const p6Start = getDate(row, "p6Start");
             const p6Finish = getDate(row, "p6Finish");
 
-            // Skip rows with no plottable data
             const hasBar = (maximoStart && maximoFinish) || (p6Start && p6Finish);
             const hasMilestone = cappExecutionStart || cappFundingFYDate || cappPlanningStart;
             if (!hasBar && !hasMilestone) return;
