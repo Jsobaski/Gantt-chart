@@ -155,6 +155,10 @@ export class Visual implements IVisual {
     }
 
     // Handles both raw date columns and Power BI date hierarchies (Year/Quarter/Month/Day).
+    // Power BI auto date/time always produces exactly 4 columns per date field in this order:
+    //   index 0 = Year, index 1 = Quarter, index 2 = Month, index 3 = Day
+    // Column display names vary by locale/version so we use positional matching as primary
+    // and keyword matching as a cross-check.
     private getDateForRole(
         row: powerbi.DataViewTableRow,
         columns: powerbi.DataViewMetadataColumn[],
@@ -168,14 +172,10 @@ export class Visual implements IVisual {
         });
 
         if (matches.length === 0) return null;
+        if (matches.length === 1) return this.parseSingleValue(row[matches[0].idx]);
 
-        // Single column: raw date value (Date object, OLE float, Unix ms, or ISO string)
-        if (matches.length === 1) {
-            return this.parseSingleValue(row[matches[0].idx]);
-        }
-
-        // Multiple columns = date hierarchy expanded by Power BI (Year, Quarter, Month, Day)
-        // Reconstruct the full date from available components.
+        // Multiple columns = date hierarchy.
+        // Strategy A: name-based (works when columns are named "Year", "Month", "Day" etc.)
         let year: number | null = null;
         let month: number | null = null;
         let day: number | null = null;
@@ -185,17 +185,39 @@ export class Visual implements IVisual {
             if (v === null || v === undefined) continue;
             const n = Number(v);
             if (isNaN(n) || !Number.isFinite(n)) continue;
-            if (name.endsWith("year")) year = n;
-            else if (name.endsWith("month")) month = n;
-            else if (name.endsWith("day") && !name.includes("week")) day = n;
+            if (name.includes("year") && !name.includes("quarter")) year = n;
+            else if (name.includes("month")) month = n;
+            else if (name.includes("day") && !name.includes("week")) day = n;
+        }
+
+        // Strategy B: positional fallback for non-English or custom column names.
+        // Power BI hierarchy order is always: [Year, Quarter, Month, Day]
+        const numAt = (i: number): number | null => {
+            if (i >= matches.length) return null;
+            const n = Number(row[matches[i].idx]);
+            return isNaN(n) || !Number.isFinite(n) ? null : n;
+        };
+
+        if (year === null) {
+            const n = numAt(0);
+            if (n !== null && n >= 1900 && n <= 2200) year = n;
+        }
+        if (month === null) {
+            // index 2 = Month (1-12)
+            const n = numAt(2);
+            if (n !== null && n >= 1 && n <= 12) month = n;
+        }
+        if (day === null) {
+            // index 3 = Day (1-31)
+            const n = numAt(3);
+            if (n !== null && n >= 1 && n <= 31) day = n;
         }
 
         if (year !== null) {
-            const date = new Date(year, month !== null ? month - 1 : 0, day !== null ? day : 1);
+            const date = new Date(year, month !== null ? month - 1 : 0, day ?? 1);
             return isNaN(date.getTime()) ? null : date;
         }
 
-        // Fallback: try the first matched column as a raw value
         return this.parseSingleValue(row[matches[0].idx]);
     }
 
