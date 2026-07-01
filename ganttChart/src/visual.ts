@@ -281,7 +281,11 @@ export class Visual implements IVisual {
             map.get(key).push(r);
         });
         const groups: LocationGroup[] = [];
-        map.forEach((grpRows, name) => groups.push({ name, rows: grpRows }));
+        map.forEach((grpRows, name) => {
+            grpRows.sort((a, b) => (a.projectName || "").localeCompare(b.projectName || ""));
+            groups.push({ name, rows: grpRows });
+        });
+        groups.sort((a, b) => a.name.localeCompare(b.name));
         return groups;
     }
 
