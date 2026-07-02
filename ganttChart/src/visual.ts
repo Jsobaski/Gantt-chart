@@ -25,6 +25,7 @@ interface GanttRow {
     maximoFinish: Date | null;
     p6Start: Date | null;
     p6Finish: Date | null;
+    extraFields: { name: string; value: string }[];
 }
 
 interface LocationGroup {
@@ -245,6 +246,27 @@ export class Visual implements IVisual {
         const getDate = (row: powerbi.DataViewTableRow, role: string): Date | null =>
             this.getDateForRole(row, columns, role);
 
+        const tooltipCols: { idx: number; name: string }[] = [];
+        columns.forEach((col, i) => {
+            if (col.roles?.["tooltipFields"]) {
+                tooltipCols.push({ idx: i, name: col.displayName || col.queryName || `Field ${i}` });
+            }
+        });
+
+        const getExtraFields = (row: powerbi.DataViewTableRow): { name: string; value: string }[] => {
+            const out: { name: string; value: string }[] = [];
+            tooltipCols.forEach(({ idx, name }) => {
+                const v = row[idx];
+                if (v === null || v === undefined || v === "") return;
+                let text: string;
+                if (v instanceof Date) text = this.fmtFull(v);
+                else if (typeof v === "number") text = v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                else text = String(v).trim();
+                if (text) out.push({ name, value: text });
+            });
+            return out;
+        };
+
         const rows: GanttRow[] = [];
         table.rows.forEach(row => {
             const location = getString(row, "location");
@@ -266,7 +288,8 @@ export class Visual implements IVisual {
             rows.push({
                 location, projectName,
                 cappExecutionStart, cappFundingFYDate, cappPlanningStart,
-                maximoStart, maximoFinish, p6Start, p6Finish
+                maximoStart, maximoFinish, p6Start, p6Finish,
+                extraFields: getExtraFields(row)
             });
         });
 
@@ -812,6 +835,12 @@ export class Visual implements IVisual {
         return row;
     }
 
+    private appendExtraFieldNodes(nodes: Node[], d: GanttRow): void {
+        if (!d.extraFields.length) return;
+        nodes.push(this.mkHR());
+        d.extraFields.forEach(f => nodes.push(this.tipRow(`${f.name}:`, f.value)));
+    }
+
     private buildBarTip(d: GanttRow, barType: "p6" | "maximo"): Node[] {
         const nodes: Node[] = [];
 
@@ -850,6 +879,7 @@ export class Visual implements IVisual {
         if (d.cappPlanningStart) nodes.push(this.tipRow("Planning Start:", this.fmtFull(d.cappPlanningStart), this.cappPlanningColor));
         if (d.cappFundingFYDate) nodes.push(this.tipRow("Funding FY:", this.fmtFull(d.cappFundingFYDate), this.cappFundingColor));
         if (d.cappExecutionStart) nodes.push(this.tipRow("Execution Start:", this.fmtFull(d.cappExecutionStart), this.cappExecColor));
+        this.appendExtraFieldNodes(nodes, d);
         return nodes;
     }
 
@@ -875,6 +905,7 @@ export class Visual implements IVisual {
 
         if (d.p6Start && d.p6Finish) nodes.push(this.tipRow("P6:", `${this.fmtShort(d.p6Start)} → ${this.fmtShort(d.p6Finish)}`));
         if (d.maximoStart && d.maximoFinish) nodes.push(this.tipRow("Maximo:", `${this.fmtShort(d.maximoStart)} → ${this.fmtShort(d.maximoFinish)}`));
+        this.appendExtraFieldNodes(nodes, d);
         return nodes;
     }
 

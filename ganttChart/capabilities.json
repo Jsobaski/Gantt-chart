@@ -53,6 +53,12 @@
             "name": "p6Finish",
             "kind": "GroupingOrMeasure",
             "description": "P6 Schedule Finish date"
+        },
+        {
+            "displayName": "Additional Tooltip Fields",
+            "name": "tooltipFields",
+            "kind": "GroupingOrMeasure",
+            "description": "Drag any extra columns here to show them in bar and milestone tooltips"
         }
     ],
     "dataViewMappings": [
@@ -68,7 +74,8 @@
                         { "for": { "in": "maximoStart" } },
                         { "for": { "in": "maximoFinish" } },
                         { "for": { "in": "p6Start" } },
-                        { "for": { "in": "p6Finish" } }
+                        { "for": { "in": "p6Finish" } },
+                        { "for": { "in": "tooltipFields" } }
                     ],
                     "dataReductionAlgorithm": {
                         "top": { "count": 2000 }
