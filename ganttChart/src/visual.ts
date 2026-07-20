@@ -15,16 +15,23 @@ import IViewport = powerbi.IViewport;
 
 import { VisualFormattingSettingsModel } from "./settings";
 
+interface SeriesDef {
+    name: string;
+    color: string;
+}
+
+interface BarValue {
+    start: Date | null;
+    finish: Date | null;
+}
+
 interface GanttRow {
     location: string;
     projectName: string;
-    cappExecutionStart: Date | null;
-    cappFundingFYDate: Date | null;
-    cappPlanningStart: Date | null;
-    maximoStart: Date | null;
-    maximoFinish: Date | null;
-    p6Start: Date | null;
-    p6Finish: Date | null;
+    // Aligned by index with this.milestoneDefs
+    milestones: (Date | null)[];
+    // Aligned by index with this.barDefs
+    bars: BarValue[];
     extraFields: { name: string; value: string }[];
 }
 
@@ -45,6 +52,10 @@ export class Visual implements IVisual {
     private formattingSettingsService: FormattingSettingsService;
 
     private allRows: GanttRow[] = [];
+    // Dynamic series definitions (name + auto-assigned color), rebuilt each update()
+    // from whichever columns are currently bound to the milestoneDate / barStart+barFinish roles.
+    private milestoneDefs: SeriesDef[] = [];
+    private barDefs: SeriesDef[] = [];
     private userDateFrom: Date | null = null;
     private userDateTo: Date | null = null;
 
@@ -60,19 +71,16 @@ export class Visual implements IVisual {
 
     // Layout constants
     private readonly LABEL_WIDTH = 295;
-    private readonly ROW_HEIGHT = 40;
+    private readonly MIN_ROW_HEIGHT = 34;
     private readonly HEADER_HEIGHT = 38;
     private readonly CONTROLS_HEIGHT = 44;
     private readonly BAR_HEIGHT = 11;
     private readonly BAR_GAP = 2;
     private readonly MILESTONE_RADIUS = 7;
+    private readonly LANE_GAP = 5;
+    private readonly ROW_V_PADDING = 16;
 
     // Colors (defaults overridden by format panel)
-    private p6Color = "#4dabf7";
-    private maximoColor = "#26c6da";
-    private cappExecColor = "#ab47bc";
-    private cappFundingColor = "#66bb6a";
-    private cappPlanningColor = "#ffa726";
     private bgColor = "#0d1b2a";
     private textColor = "#d0e4f7";
     private readonly headerBgColor = "#0a1728";
@@ -103,7 +111,7 @@ export class Visual implements IVisual {
                 this.clearEl(this.container);
                 const msg = document.createElement("div");
                 msg.style.cssText = `color:${this.textColor};padding:24px;font-size:13px;background:${this.bgColor};height:100%;`;
-                msg.textContent = "Map data fields to this visual: Location, Project Name, date fields.";
+                msg.textContent = "Map data fields to this visual: Location, Project Name, milestone dates, and start/finish date pairs.";
                 this.container.appendChild(msg);
                 this.events.renderingFinished(options);
                 return;
@@ -121,11 +129,6 @@ export class Visual implements IVisual {
     private applySettings(): void {
         if (!this.formattingSettings) return;
         const s = this.formattingSettings.ganttConfig;
-        this.p6Color = s.p6BarColor.value.value || this.p6Color;
-        this.maximoColor = s.maximoBarColor.value.value || this.maximoColor;
-        this.cappExecColor = s.cappExecColor.value.value || this.cappExecColor;
-        this.cappFundingColor = s.cappFundingColor.value.value || this.cappFundingColor;
-        this.cappPlanningColor = s.cappPlanningColor.value.value || this.cappPlanningColor;
         this.bgColor = s.bgColor.value.value || this.bgColor;
         this.textColor = s.textColor.value.value || this.textColor;
     }
@@ -155,80 +158,23 @@ export class Visual implements IVisual {
         return isNaN(d.getTime()) ? null : d;
     }
 
-    // Handles both raw date columns and Power BI date hierarchies (Year/Quarter/Month/Day).
-    // Power BI auto date/time always produces exactly 4 columns per date field in this order:
-    //   index 0 = Year, index 1 = Quarter, index 2 = Month, index 3 = Day
-    // Column display names vary by locale/version so we use positional matching as primary
-    // and keyword matching as a cross-check.
-    private getDateForRole(
-        row: powerbi.DataViewTableRow,
-        columns: powerbi.DataViewMetadataColumn[],
-        role: string
-    ): Date | null {
-        const matches: Array<{idx: number; name: string}> = [];
-        (columns || []).forEach((col, idx) => {
-            if (col.roles?.[role]) {
-                matches.push({ idx, name: (col.displayName || col.queryName || "").toLowerCase() });
-            }
-        });
-
-        if (matches.length === 0) return null;
-        if (matches.length === 1) return this.parseSingleValue(row[matches[0].idx]);
-
-        // Multiple columns = date hierarchy.
-        // Strategy A: name-based (works when columns are named "Year", "Month", "Day" etc.)
-        let year: number | null = null;
-        let month: number | null = null;
-        let day: number | null = null;
-
-        for (const { idx, name } of matches) {
-            const v = row[idx];
-            if (v === null || v === undefined) continue;
-            const n = Number(v);
-            if (isNaN(n) || !Number.isFinite(n)) continue;
-            if (name.includes("year") && !name.includes("quarter")) year = n;
-            else if (name.includes("month")) month = n;
-            else if (name.includes("day") && !name.includes("week")) day = n;
-        }
-
-        // Strategy B: positional fallback for non-English or custom column names.
-        // Power BI hierarchy order is always: [Year, Quarter, Month, Day]
-        const numAt = (i: number): number | null => {
-            if (i >= matches.length) return null;
-            const n = Number(row[matches[i].idx]);
-            return isNaN(n) || !Number.isFinite(n) ? null : n;
-        };
-
-        if (year === null) {
-            const n = numAt(0);
-            if (n !== null && n >= 1900 && n <= 2200) year = n;
-        }
-        if (month === null) {
-            // index 2 = Month (1-12)
-            const n = numAt(2);
-            if (n !== null && n >= 1 && n <= 12) month = n;
-        }
-        if (day === null) {
-            // index 3 = Day (1-31)
-            const n = numAt(3);
-            if (n !== null && n >= 1 && n <= 31) day = n;
-        }
-
-        if (year !== null) {
-            const date = new Date(year, month !== null ? month - 1 : 0, day ?? 1);
-            return isNaN(date.getTime()) ? null : date;
-        }
-
-        return this.parseSingleValue(row[matches[0].idx]);
-    }
-
+    // NOTE: milestoneDate / barStart / barFinish are shared roles that can carry
+    // several independent user-chosen fields at once (that's what makes them dynamic).
+    // Because of that we can no longer tell apart "one field expanded into a Year/
+    // Quarter/Month/Day hierarchy" from "several distinct fields sharing a role" —
+    // so each bound column here is read as a single plain date value. This requires
+    // Power BI's Auto Date/Time option to stay OFF (File > Options > Data Load),
+    // exactly as already required to fix the earlier date-hierarchy bugs.
     private parseRows(dataView: DataView): GanttRow[] {
         const table = dataView.table;
-        if (!table?.rows?.length) return [];
+        if (!table?.rows?.length) {
+            this.milestoneDefs = [];
+            this.barDefs = [];
+            return [];
+        }
 
         const columns = table.columns || [];
 
-        // Text fields: still use first-column-per-role map
         const colMap: Record<string, number> = {};
         columns.forEach((col, i) => {
             Object.keys(col.roles || {}).forEach(role => {
@@ -243,15 +189,32 @@ export class Visual implements IVisual {
             return v !== null && v !== undefined ? String(v).trim() : "";
         };
 
-        const getDate = (row: powerbi.DataViewTableRow, role: string): Date | null =>
-            this.getDateForRole(row, columns, role);
-
+        const milestoneCols: { idx: number; name: string }[] = [];
+        const barStartCols: { idx: number; name: string }[] = [];
+        const barFinishCols: { idx: number; name: string }[] = [];
         const tooltipCols: { idx: number; name: string }[] = [];
         columns.forEach((col, i) => {
-            if (col.roles?.["tooltipFields"]) {
-                tooltipCols.push({ idx: i, name: col.displayName || col.queryName || `Field ${i}` });
-            }
+            const name = col.displayName || col.queryName || `Field ${i}`;
+            if (col.roles?.["milestoneDate"]) milestoneCols.push({ idx: i, name });
+            if (col.roles?.["barStart"]) barStartCols.push({ idx: i, name });
+            if (col.roles?.["barFinish"]) barFinishCols.push({ idx: i, name });
+            if (col.roles?.["tooltipFields"]) tooltipCols.push({ idx: i, name });
         });
+
+        // Bar starts/finishes are paired positionally: 1st Start field with 1st Finish
+        // field, 2nd with 2nd, etc. Add them to the field wells in matching order.
+        const barCount = Math.min(barStartCols.length, barFinishCols.length);
+
+        // Rename a field via right-click > "Rename for this visual" in Power BI to
+        // control exactly what shows up in the legend and tooltips.
+        this.milestoneDefs = milestoneCols.map(c => ({
+            name: c.name,
+            color: this.host.colorPalette.getColor(`milestone_${c.name}`).value
+        }));
+        this.barDefs = barStartCols.slice(0, barCount).map(c => ({
+            name: c.name,
+            color: this.host.colorPalette.getColor(`bar_${c.name}`).value
+        }));
 
         const getExtraFields = (row: powerbi.DataViewTableRow): { name: string; value: string }[] => {
             const out: { name: string; value: string }[] = [];
@@ -273,24 +236,20 @@ export class Visual implements IVisual {
             const projectName = getString(row, "projectName");
             if (!location && !projectName) return;
 
-            const cappExecutionStart = getDate(row, "cappExecutionStart");
-            const cappFundingFYDate = getDate(row, "cappFundingFYDate");
-            const cappPlanningStart = getDate(row, "cappPlanningStart");
-            const maximoStart = getDate(row, "maximoStart");
-            const maximoFinish = getDate(row, "maximoFinish");
-            const p6Start = getDate(row, "p6Start");
-            const p6Finish = getDate(row, "p6Finish");
+            const milestones = milestoneCols.map(c => this.parseSingleValue(row[c.idx]));
+            const bars: BarValue[] = [];
+            for (let i = 0; i < barCount; i++) {
+                bars.push({
+                    start: this.parseSingleValue(row[barStartCols[i].idx]),
+                    finish: this.parseSingleValue(row[barFinishCols[i].idx])
+                });
+            }
 
-            const hasBar = (maximoStart && maximoFinish) || (p6Start && p6Finish);
-            const hasMilestone = cappExecutionStart || cappFundingFYDate || cappPlanningStart;
+            const hasBar = bars.some(b => b.start && b.finish);
+            const hasMilestone = milestones.some(m => m !== null);
             if (!hasBar && !hasMilestone) return;
 
-            rows.push({
-                location, projectName,
-                cappExecutionStart, cappFundingFYDate, cappPlanningStart,
-                maximoStart, maximoFinish, p6Start, p6Finish,
-                extraFields: getExtraFields(row)
-            });
+            rows.push({ location, projectName, milestones, bars, extraFields: getExtraFields(row) });
         });
 
         return rows;
@@ -315,9 +274,11 @@ export class Visual implements IVisual {
     private computeDateRange(rows: GanttRow[]): { from: Date; to: Date } {
         const dates: Date[] = [];
         rows.forEach(r => {
-            [r.cappExecutionStart, r.cappFundingFYDate, r.cappPlanningStart,
-                r.maximoStart, r.maximoFinish, r.p6Start, r.p6Finish]
-                .forEach(d => { if (d) dates.push(d); });
+            r.milestones.forEach(d => { if (d) dates.push(d); });
+            r.bars.forEach(b => {
+                if (b.start) dates.push(b.start);
+                if (b.finish) dates.push(b.finish);
+            });
         });
         if (!dates.length) {
             const now = new Date();
@@ -344,8 +305,17 @@ export class Visual implements IVisual {
         return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
     }
 
-    private esc(s: string): string {
-        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // Total vertical space a project row needs given the current dynamic series counts:
+    // a lane for milestone diamonds stacked above a lane of stacked bars, centered in the row.
+    private computeRowMetrics(): { rowHeight: number; contentH: number; milestoneLaneH: number; laneGap: number; barsLaneH: number } {
+        const barCount = this.barDefs.length;
+        const msCount = this.milestoneDefs.length;
+        const milestoneLaneH = msCount > 0 ? this.MILESTONE_RADIUS * 2 : 0;
+        const barsLaneH = barCount > 0 ? barCount * this.BAR_HEIGHT + Math.max(0, barCount - 1) * this.BAR_GAP : 0;
+        const laneGap = (milestoneLaneH > 0 && barsLaneH > 0) ? this.LANE_GAP : 0;
+        const contentH = milestoneLaneH + laneGap + barsLaneH;
+        const rowHeight = Math.max(this.MIN_ROW_HEIGHT, contentH + this.ROW_V_PADDING);
+        return { rowHeight, contentH, milestoneLaneH, laneGap, barsLaneH };
     }
 
     private render(viewport: IViewport): void {
@@ -365,8 +335,10 @@ export class Visual implements IVisual {
         const dateFrom = this.userDateFrom || dataFrom;
         const dateTo = this.userDateTo || dataTo;
 
+        const { rowHeight, contentH, milestoneLaneH, laneGap } = this.computeRowMetrics();
+
         const timelineWidth = Math.max(W - this.LABEL_WIDTH, 500);
-        const totalBodyHeight = displayRows.length * this.ROW_HEIGHT;
+        const totalBodyHeight = displayRows.length * rowHeight;
 
         // ── Outer wrapper ────────────────────────────────────────────────
         const outer = document.createElement("div");
@@ -420,15 +392,12 @@ export class Visual implements IVisual {
             "flex-wrap:wrap"
         ].join(";");
 
-        // Legend chips
+        // Legend chips — built dynamically from whatever bar/milestone fields are bound.
         const legend = document.createElement("div");
-        legend.style.cssText = "display:flex;align-items:center;gap:14px;flex:1;";
+        legend.style.cssText = "display:flex;align-items:center;gap:14px;flex:1;flex-wrap:wrap;";
         const legendItems: Array<{ color: string; label: string; isBar: boolean }> = [
-            { color: this.p6Color, label: "P6", isBar: true },
-            { color: this.maximoColor, label: "Maximo", isBar: true },
-            { color: this.cappPlanningColor, label: "Planning Start", isBar: false },
-            { color: this.cappFundingColor, label: "Funding FY", isBar: false },
-            { color: this.cappExecColor, label: "Execution Start", isBar: false }
+            ...this.barDefs.map(b => ({ color: b.color, label: b.name, isBar: true })),
+            ...this.milestoneDefs.map(m => ({ color: m.color, label: m.name, isBar: false }))
         ];
         legendItems.forEach(item => {
             const chip = document.createElement("span");
@@ -635,14 +604,14 @@ export class Visual implements IVisual {
 
         // ── Row rendering ─────────────────────────────────────────────────
         displayRows.forEach((row, idx) => {
-            const y = idx * this.ROW_HEIGHT;
+            const y = idx * rowHeight;
             const isEvenRow = idx % 2 === 0;
 
             if (row.type === "location") {
                 // ── Location header ─────────────────────────────────────
                 const div = document.createElement("div");
                 div.style.cssText = [
-                    `height:${this.ROW_HEIGHT}px`,
+                    `height:${rowHeight}px`,
                     "display:flex", "align-items:center",
                     "padding:0 10px", "font-weight:700", "font-size:12px",
                     "letter-spacing:0.06em", "text-transform:uppercase",
@@ -655,11 +624,11 @@ export class Visual implements IVisual {
 
                 svg.append("rect")
                     .attr("x", 0).attr("y", y)
-                    .attr("width", timelineWidth).attr("height", this.ROW_HEIGHT)
+                    .attr("width", timelineWidth).attr("height", rowHeight)
                     .attr("fill", this.locationBgColor).attr("fill-opacity", 0.45);
                 svg.append("line")
-                    .attr("x1", 0).attr("y1", y + this.ROW_HEIGHT)
-                    .attr("x2", timelineWidth).attr("y2", y + this.ROW_HEIGHT)
+                    .attr("x1", 0).attr("y1", y + rowHeight)
+                    .attr("x2", timelineWidth).attr("y2", y + rowHeight)
                     .attr("stroke", this.gridColor).attr("stroke-width", 0.6);
 
             } else {
@@ -670,7 +639,7 @@ export class Visual implements IVisual {
                 // Label div
                 const div = document.createElement("div");
                 div.style.cssText = [
-                    `height:${this.ROW_HEIGHT}px`,
+                    `height:${rowHeight}px`,
                     "display:flex", "align-items:center",
                     "padding:0 6px 0 22px",
                     "font-size:11.5px",
@@ -694,121 +663,83 @@ export class Visual implements IVisual {
                 // Row background stripe on SVG
                 svg.append("rect")
                     .attr("x", 0).attr("y", y)
-                    .attr("width", timelineWidth).attr("height", this.ROW_HEIGHT)
+                    .attr("width", timelineWidth).attr("height", rowHeight)
                     .attr("fill", rowBg);
                 svg.append("line")
-                    .attr("x1", 0).attr("y1", y + this.ROW_HEIGHT)
-                    .attr("x2", timelineWidth).attr("y2", y + this.ROW_HEIGHT)
+                    .attr("x1", 0).attr("y1", y + rowHeight)
+                    .attr("x2", timelineWidth).attr("y2", y + rowHeight)
                     .attr("stroke", this.gridColor).attr("stroke-width", 0.3);
 
-                const midY = y + this.ROW_HEIGHT / 2;
-                const p6BarY = midY - this.BAR_GAP - this.BAR_HEIGHT;
-                const maxBarY = midY + this.BAR_GAP;
+                // Milestone lane centered above the bars lane, whole block vertically centered in the row
+                const contentTop = y + (rowHeight - contentH) / 2;
+                const milestoneCenterY = contentTop + this.MILESTONE_RADIUS;
+                const barsTop = contentTop + milestoneLaneH + laneGap;
 
-                // ── P6 bar ───────────────────────────────────────────────
-                if (d.p6Start && d.p6Finish && d.p6Start <= d.p6Finish) {
-                    const x1 = xScale(d.p6Start);
-                    const x2 = xScale(d.p6Finish);
+                // ── Bars (stacked, one lane per dynamic bar series) ──────
+                d.bars.forEach((bv, i) => {
+                    if (!bv.start || !bv.finish || bv.start > bv.finish) return;
+                    const def = this.barDefs[i];
+                    if (!def) return;
+                    const barY = barsTop + i * (this.BAR_HEIGHT + this.BAR_GAP);
+                    const x1 = xScale(bv.start);
+                    const x2 = xScale(bv.finish);
                     const clampX1 = Math.max(0, x1);
                     const clampX2 = Math.min(timelineWidth, x2);
-                    if (clampX2 > clampX1) {
-                        const bw = clampX2 - clampX1;
-                        const bar = svg.append("rect")
-                            .attr("x", clampX1).attr("y", p6BarY)
-                            .attr("width", bw).attr("height", this.BAR_HEIGHT)
-                            .attr("fill", this.p6Color)
-                            .attr("rx", 3).attr("ry", 3)
-                            .style("cursor", "pointer");
+                    if (clampX2 <= clampX1) return;
+                    const bw = clampX2 - clampX1;
 
-                        if (bw > 90) {
-                            svg.append("text")
-                                .attr("x", clampX1 + bw / 2)
-                                .attr("y", p6BarY + this.BAR_HEIGHT / 2 + 4)
-                                .attr("text-anchor", "middle")
-                                .attr("font-size", "9px")
-                                .attr("fill", "#041020")
-                                .attr("font-family", "Segoe UI, Arial, sans-serif")
-                                .attr("pointer-events", "none")
-                                .attr("font-weight", "600")
-                                .text(`P6: ${this.fmtShort(d.p6Start)} - ${this.fmtShort(d.p6Finish)}`);
-                        }
+                    const bar = svg.append("rect")
+                        .attr("x", clampX1).attr("y", barY)
+                        .attr("width", bw).attr("height", this.BAR_HEIGHT)
+                        .attr("fill", def.color)
+                        .attr("rx", 3).attr("ry", 3)
+                        .style("cursor", "pointer");
 
-                        bar.on("mouseenter", (ev: MouseEvent) => {
-                            bar.attr("fill-opacity", 0.85);
-                            showTip(this.buildBarTip(d, "p6"), ev);
-                        })
-                        .on("mousemove", (ev: MouseEvent) => moveTip(ev))
-                        .on("mouseleave", () => { bar.attr("fill-opacity", 1); hideTip(); });
+                    if (bw > 90) {
+                        svg.append("text")
+                            .attr("x", clampX1 + bw / 2)
+                            .attr("y", barY + this.BAR_HEIGHT / 2 + 4)
+                            .attr("text-anchor", "middle")
+                            .attr("font-size", "9px")
+                            .attr("fill", "#041020")
+                            .attr("font-family", "Segoe UI, Arial, sans-serif")
+                            .attr("pointer-events", "none")
+                            .attr("font-weight", "600")
+                            .text(`${def.name}: ${this.fmtShort(bv.start)} - ${this.fmtShort(bv.finish)}`);
                     }
-                }
 
-                // ── Maximo bar ───────────────────────────────────────────
-                if (d.maximoStart && d.maximoFinish && d.maximoStart <= d.maximoFinish) {
-                    const x1 = xScale(d.maximoStart);
-                    const x2 = xScale(d.maximoFinish);
-                    const clampX1 = Math.max(0, x1);
-                    const clampX2 = Math.min(timelineWidth, x2);
-                    if (clampX2 > clampX1) {
-                        const bw = clampX2 - clampX1;
-                        const bar = svg.append("rect")
-                            .attr("x", clampX1).attr("y", maxBarY)
-                            .attr("width", bw).attr("height", this.BAR_HEIGHT)
-                            .attr("fill", this.maximoColor)
-                            .attr("rx", 3).attr("ry", 3)
-                            .style("cursor", "pointer");
+                    bar.on("mouseenter", (ev: MouseEvent) => {
+                        bar.attr("fill-opacity", 0.85);
+                        showTip(this.buildBarTip(d, i), ev);
+                    })
+                    .on("mousemove", (ev: MouseEvent) => moveTip(ev))
+                    .on("mouseleave", () => { bar.attr("fill-opacity", 1); hideTip(); });
+                });
 
-                        if (bw > 90) {
-                            svg.append("text")
-                                .attr("x", clampX1 + bw / 2)
-                                .attr("y", maxBarY + this.BAR_HEIGHT / 2 + 4)
-                                .attr("text-anchor", "middle")
-                                .attr("font-size", "9px")
-                                .attr("fill", "#041020")
-                                .attr("font-family", "Segoe UI, Arial, sans-serif")
-                                .attr("pointer-events", "none")
-                                .attr("font-weight", "600")
-                                .text(`Maximo: ${this.fmtShort(d.maximoStart)} - ${this.fmtShort(d.maximoFinish)}`);
-                        }
-
-                        bar.on("mouseenter", (ev: MouseEvent) => {
-                            bar.attr("fill-opacity", 0.85);
-                            showTip(this.buildBarTip(d, "maximo"), ev);
-                        })
-                        .on("mousemove", (ev: MouseEvent) => moveTip(ev))
-                        .on("mouseleave", () => { bar.attr("fill-opacity", 1); hideTip(); });
-                    }
-                }
-
-                // ── Milestone diamonds ───────────────────────────────────
-                const milestones = [
-                    { date: d.cappPlanningStart, color: this.cappPlanningColor, label: "CAPP Planning Start" },
-                    { date: d.cappFundingFYDate, color: this.cappFundingColor, label: "CAPP Funding FY Date" },
-                    { date: d.cappExecutionStart, color: this.cappExecColor, label: "CAPP Execution Start" }
-                ];
-
-                milestones.forEach(ms => {
-                    if (!ms.date || ms.date < dateFrom || ms.date > dateTo) return;
-                    const mx = xScale(ms.date);
+                // ── Milestone diamonds (one lane, N diamonds across the timeline) ──
+                d.milestones.forEach((date, i) => {
+                    const def = this.milestoneDefs[i];
+                    if (!date || !def || date < dateFrom || date > dateTo) return;
+                    const mx = xScale(date);
                     const r = this.MILESTONE_RADIUS;
-                    const pts = `${mx},${midY - r} ${mx + r},${midY} ${mx},${midY + r} ${mx - r},${midY}`;
+                    const pts = `${mx},${milestoneCenterY - r} ${mx + r},${milestoneCenterY} ${mx},${milestoneCenterY + r} ${mx - r},${milestoneCenterY}`;
 
                     const diamond = svg.append("polygon")
                         .attr("points", pts)
-                        .attr("fill", ms.color)
+                        .attr("fill", def.color)
                         .attr("stroke", "rgba(255,255,255,0.4)")
                         .attr("stroke-width", 0.8)
                         .style("cursor", "pointer");
 
                     diamond.on("mouseenter", (ev: MouseEvent) => {
                         diamond.attr("stroke-width", 2).attr("stroke", "white");
-                        showTip(this.buildMilestoneTip(d, ms), ev);
+                        showTip(this.buildMilestoneTip(d, i), ev);
                     })
                     .on("mousemove", (ev: MouseEvent) => moveTip(ev))
                     .on("mouseleave", () => {
                         diamond.attr("stroke-width", 0.8).attr("stroke", "rgba(255,255,255,0.4)");
                         hideTip();
                     });
-
                 });
             }
         });
@@ -841,9 +772,8 @@ export class Visual implements IVisual {
         d.extraFields.forEach(f => nodes.push(this.tipRow(`${f.name}:`, f.value)));
     }
 
-    private buildBarTip(d: GanttRow, barType: "p6" | "maximo"): Node[] {
+    private buildTipHeader(d: GanttRow): Node[] {
         const nodes: Node[] = [];
-
         const title = document.createElement("strong");
         title.style.cssText = "font-size:12.5px;display:block;";
         title.textContent = d.projectName;
@@ -854,57 +784,45 @@ export class Visual implements IVisual {
         loc.textContent = d.location;
         nodes.push(loc);
         nodes.push(this.mkHR());
+        return nodes;
+    }
 
-        if (barType === "p6" && d.p6Start && d.p6Finish) {
+    // Tooltip for a single bar series only — deliberately excludes other bars'
+    // and milestones' data so unrelated metrics don't clutter an unrelated tooltip.
+    private buildBarTip(d: GanttRow, barIndex: number): Node[] {
+        const nodes = this.buildTipHeader(d);
+        const def = this.barDefs[barIndex];
+        const bv = d.bars[barIndex];
+
+        if (def && bv?.start && bv?.finish) {
             const hdr = document.createElement("span");
-            hdr.style.cssText = `color:${this.p6Color};font-weight:600;display:block;`;
-            hdr.textContent = "P6 Schedule";
+            hdr.style.cssText = `color:${def.color};font-weight:600;display:block;`;
+            hdr.textContent = def.name;
             nodes.push(hdr);
-            nodes.push(this.tipRow("Start:", this.fmtFull(d.p6Start)));
-            nodes.push(this.tipRow("Finish:", this.fmtFull(d.p6Finish)));
-            const days = Math.round((d.p6Finish.getTime() - d.p6Start.getTime()) / 86400000);
-            nodes.push(this.tipRow("Duration:", `${days} days`));
-        } else if (barType === "maximo" && d.maximoStart && d.maximoFinish) {
-            const hdr = document.createElement("span");
-            hdr.style.cssText = `color:${this.maximoColor};font-weight:600;display:block;`;
-            hdr.textContent = "Maximo Schedule";
-            nodes.push(hdr);
-            nodes.push(this.tipRow("Start:", this.fmtFull(d.maximoStart)));
-            nodes.push(this.tipRow("Finish:", this.fmtFull(d.maximoFinish)));
-            const days = Math.round((d.maximoFinish.getTime() - d.maximoStart.getTime()) / 86400000);
+            nodes.push(this.tipRow("Start:", this.fmtFull(bv.start)));
+            nodes.push(this.tipRow("Finish:", this.fmtFull(bv.finish)));
+            const days = Math.round((bv.finish.getTime() - bv.start.getTime()) / 86400000);
             nodes.push(this.tipRow("Duration:", `${days} days`));
         }
 
-        nodes.push(this.mkHR());
-        if (d.cappPlanningStart) nodes.push(this.tipRow("Planning Start:", this.fmtFull(d.cappPlanningStart), this.cappPlanningColor));
-        if (d.cappFundingFYDate) nodes.push(this.tipRow("Funding FY:", this.fmtFull(d.cappFundingFYDate), this.cappFundingColor));
-        if (d.cappExecutionStart) nodes.push(this.tipRow("Execution Start:", this.fmtFull(d.cappExecutionStart), this.cappExecColor));
         this.appendExtraFieldNodes(nodes, d);
         return nodes;
     }
 
-    private buildMilestoneTip(d: GanttRow, ms: { date: Date; color: string; label: string }): Node[] {
-        const nodes: Node[] = [];
+    // Tooltip for a single milestone series only — same isolation as buildBarTip.
+    private buildMilestoneTip(d: GanttRow, msIndex: number): Node[] {
+        const nodes = this.buildTipHeader(d);
+        const def = this.milestoneDefs[msIndex];
+        const date = d.milestones[msIndex];
 
-        const title = document.createElement("strong");
-        title.style.cssText = "font-size:12.5px;display:block;";
-        title.textContent = d.projectName;
-        nodes.push(title);
+        if (def && date) {
+            const msHdr = document.createElement("span");
+            msHdr.style.cssText = `color:${def.color};font-weight:600;display:block;`;
+            msHdr.textContent = `◆ ${def.name}`;
+            nodes.push(msHdr);
+            nodes.push(this.tipRow("Date:", this.fmtFull(date)));
+        }
 
-        const loc = document.createElement("span");
-        loc.style.cssText = "opacity:0.75;font-size:11px;display:block;margin-bottom:4px;";
-        loc.textContent = d.location;
-        nodes.push(loc);
-        nodes.push(this.mkHR());
-
-        const msHdr = document.createElement("span");
-        msHdr.style.cssText = `color:${ms.color};font-weight:600;display:block;`;
-        msHdr.textContent = `◆ ${ms.label}`;
-        nodes.push(msHdr);
-        nodes.push(this.tipRow("Date:", this.fmtFull(ms.date)));
-
-        if (d.p6Start && d.p6Finish) nodes.push(this.tipRow("P6:", `${this.fmtShort(d.p6Start)} → ${this.fmtShort(d.p6Finish)}`));
-        if (d.maximoStart && d.maximoFinish) nodes.push(this.tipRow("Maximo:", `${this.fmtShort(d.maximoStart)} → ${this.fmtShort(d.maximoFinish)}`));
         this.appendExtraFieldNodes(nodes, d);
         return nodes;
     }
