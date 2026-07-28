@@ -3,7 +3,7 @@
 import "./../style/visual.less";
 import * as d3 from "d3";
 import powerbi from "powerbi-visuals-api";
-import { FormattingSettingsService } from "powerbi-visuals-utils-formattingmodel";
+import { FormattingSettingsService, formattingSettings as fs } from "powerbi-visuals-utils-formattingmodel";
 
 import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructorOptions;
 import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
@@ -17,6 +17,7 @@ import { VisualFormattingSettingsModel } from "./settings";
 
 interface SeriesDef {
     name: string;
+    queryName: string;
     color: string;
 }
 
@@ -118,6 +119,7 @@ export class Visual implements IVisual {
             }
 
             this.allRows = this.parseRows(options.dataViews[0]);
+            this.formattingSettings.cards = [this.formattingSettings.ganttConfig, this.buildSeriesColorCard()];
             this.render(options.viewport);
             this.events.renderingFinished(options);
         } catch (err) {
@@ -131,6 +133,42 @@ export class Visual implements IVisual {
         const s = this.formattingSettings.ganttConfig;
         this.bgColor = s.bgColor.value.value || this.bgColor;
         this.textColor = s.textColor.value.value || this.textColor;
+    }
+
+    // Per-field override (set via the "Series Colors" section of the Format pane)
+    // takes priority over the automatically assigned palette color.
+    private resolveColor(col: powerbi.DataViewMetadataColumn, fallbackKey: string): string {
+        const override = (col.objects as Record<string, Record<string, { solid?: { color?: string } }>> | undefined)
+            ?.dataColors?.fill?.solid?.color;
+        return override || this.host.colorPalette.getColor(fallbackKey).value;
+    }
+
+    // Builds one Color Picker slice per currently-bound bar/milestone field, so the
+    // Format pane's "Series Colors" section always matches whatever's on the visual.
+    // Each slice is bound to that specific column via a measure-scoped selector, so
+    // Power BI persists the override on that column (not tied to row/position).
+    private buildSeriesColorCard(): fs.SimpleCard {
+        const slices: fs.Slice[] = [];
+        const addSlice = (def: SeriesDef) => {
+            const selector = this.host.createSelectionIdBuilder()
+                .withMeasure(def.queryName)
+                .createSelectionId()
+                .getSelector();
+            slices.push(new fs.ColorPicker({
+                name: "fill",
+                displayName: def.name,
+                value: { value: def.color },
+                selector
+            }));
+        };
+        this.barDefs.forEach(addSlice);
+        this.milestoneDefs.forEach(addSlice);
+
+        const card = new fs.SimpleCard();
+        card.name = "dataColors";
+        card.displayName = "Series Colors";
+        card.slices = slices;
+        return card;
     }
 
     private parseSingleValue(val: powerbi.PrimitiveValue): Date | null {
@@ -206,14 +244,18 @@ export class Visual implements IVisual {
         const barCount = Math.min(barStartCols.length, barFinishCols.length);
 
         // Rename a field via right-click > "Rename for this visual" in Power BI to
-        // control exactly what shows up in the legend and tooltips.
+        // control exactly what shows up in the legend and tooltips. A per-field color
+        // set in the Format pane ("Series Colors") persists on that column's `objects`
+        // and takes priority over the automatically assigned palette color.
         this.milestoneDefs = milestoneCols.map(c => ({
             name: c.name,
-            color: this.host.colorPalette.getColor(`milestone_${c.name}`).value
+            queryName: columns[c.idx].queryName || c.name,
+            color: this.resolveColor(columns[c.idx], `milestone_${c.name}`)
         }));
         this.barDefs = barStartCols.slice(0, barCount).map(c => ({
             name: c.name,
-            color: this.host.colorPalette.getColor(`bar_${c.name}`).value
+            queryName: columns[c.idx].queryName || c.name,
+            color: this.resolveColor(columns[c.idx], `bar_${c.name}`)
         }));
 
         const getExtraFields = (row: powerbi.DataViewTableRow): { name: string; value: string }[] => {

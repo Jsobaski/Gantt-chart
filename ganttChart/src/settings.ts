@@ -29,5 +29,8 @@ class GanttConfigCard extends FormattingSettingsCard {
 
 export class VisualFormattingSettingsModel extends FormattingSettingsModel {
     public ganttConfig: GanttConfigCard = new GanttConfigCard();
-    cards = [this.ganttConfig];
+    // Typed broadly because visual.ts appends a dynamically-built "Series Colors"
+    // card (a plain formattingSettings.SimpleCard) whose slice count varies with
+    // however many bar/milestone fields are currently bound.
+    cards: Array<formattingSettings.SimpleCard> = [this.ganttConfig];
 }
