@@ -59,8 +59,11 @@
     "objects": {
         "ganttConfig": {
             "properties": {
-                "bgColor":   { "type": { "fill": { "solid": { "color": true } } } },
-                "textColor": { "type": { "fill": { "solid": { "color": true } } } }
+                "bgColor":      { "type": { "fill": { "solid": { "color": true } } } },
+                "textColor":    { "type": { "fill": { "solid": { "color": true } } } },
+                "barHeight":    { "type": { "numeric": true } },
+                "barFontSize":  { "type": { "numeric": true } },
+                "barFontColor": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "dataColors": {

@@ -73,20 +73,30 @@ export class Visual implements IVisual {
     // Layout constants
     private readonly LABEL_WIDTH = 295;
     private readonly MIN_ROW_HEIGHT = 34;
-    private readonly HEADER_HEIGHT = 38;
+    private readonly FY_LANE_HEIGHT = 17;
+    private readonly QUARTER_LANE_HEIGHT = 17;
+    private readonly MONTH_LANE_HEIGHT = 24;
+    private readonly HEADER_HEIGHT = this.FY_LANE_HEIGHT + this.QUARTER_LANE_HEIGHT + this.MONTH_LANE_HEIGHT;
     private readonly CONTROLS_HEIGHT = 44;
-    private readonly BAR_HEIGHT = 11;
     private readonly BAR_GAP = 2;
     private readonly MILESTONE_RADIUS = 7;
     private readonly LANE_GAP = 5;
     private readonly ROW_V_PADDING = 16;
+    // Fiscal year starts Oct 1 (e.g. Oct 2025 - Sep 2026 is FY2026).
+    private readonly FISCAL_YEAR_START_MONTH = 9;
 
-    // Colors (defaults overridden by format panel)
-    private bgColor = "#0d1b2a";
-    private textColor = "#d0e4f7";
-    private readonly headerBgColor = "#0a1728";
-    private readonly locationBgColor = "#112840";
-    private readonly gridColor = "#1a3a5c";
+    // Bar appearance (defaults overridden by format panel)
+    private barHeight = 11;
+    private barFontSize = 9;
+    private barFontColor = "#041020";
+
+    // Colors — brand palette (ACE Visual Design Guide): Dark Blue family for the
+    // canvas/chrome, Light Blue as an accent, defaults overridden by format panel.
+    private bgColor = "#0D1B30";
+    private textColor = "#F6F6F6";
+    private readonly headerBgColor = "#132849";
+    private readonly locationBgColor = "#193661";
+    private readonly gridColor = "#1D5674";
     private readonly todayColor = "#ef5350";
 
     constructor(options: VisualConstructorOptions) {
@@ -133,6 +143,39 @@ export class Visual implements IVisual {
         const s = this.formattingSettings.ganttConfig;
         this.bgColor = s.bgColor.value.value || this.bgColor;
         this.textColor = s.textColor.value.value || this.textColor;
+        this.barHeight = s.barHeight.value ?? this.barHeight;
+        this.barFontSize = s.barFontSize.value ?? this.barFontSize;
+        this.barFontColor = s.barFontColor.value.value || this.barFontColor;
+    }
+
+    // FY starts Oct 1: Oct-Dec of calendar year Y belong to FY(Y+1).
+    private fiscalYearOf(d: Date): number {
+        return d.getMonth() >= this.FISCAL_YEAR_START_MONTH ? d.getFullYear() + 1 : d.getFullYear();
+    }
+
+    // Fiscal quarters: Q1 = Oct-Dec, Q2 = Jan-Mar, Q3 = Apr-Jun, Q4 = Jul-Sep.
+    private fiscalQuarterOf(d: Date): number {
+        const shifted = (d.getMonth() + (12 - this.FISCAL_YEAR_START_MONTH)) % 12;
+        return Math.floor(shifted / 3) + 1;
+    }
+
+    private fiscalYearBounds(fy: number): { from: Date; to: Date } {
+        return { from: new Date(fy - 1, this.FISCAL_YEAR_START_MONTH, 1), to: new Date(fy, this.FISCAL_YEAR_START_MONTH, 1) };
+    }
+
+    private fiscalQuarterBounds(fy: number, q: 1 | 2 | 3 | 4): { from: Date; to: Date } {
+        const startMonth = (this.FISCAL_YEAR_START_MONTH + (q - 1) * 3) % 12;
+        // Q1 starts in the prior calendar year; Q2-Q4 start in the FY's own calendar year.
+        const startYear = q === 1 ? fy - 1 : fy;
+        const endYear = startMonth + 3 > 11 ? startYear + 1 : startYear;
+        return { from: new Date(startYear, startMonth, 1), to: new Date(endYear, (startMonth + 3) % 12, 1) };
+    }
+
+    private thisWeekBounds(): { from: Date; to: Date } {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+        const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+        return { from: start, to: end };
     }
 
     // Per-field override (set via the "Series Colors" section of the Format pane)
@@ -353,7 +396,7 @@ export class Visual implements IVisual {
         const barCount = this.barDefs.length;
         const msCount = this.milestoneDefs.length;
         const milestoneLaneH = msCount > 0 ? this.MILESTONE_RADIUS * 2 : 0;
-        const barsLaneH = barCount > 0 ? barCount * this.BAR_HEIGHT + Math.max(0, barCount - 1) * this.BAR_GAP : 0;
+        const barsLaneH = barCount > 0 ? barCount * this.barHeight + Math.max(0, barCount - 1) * this.BAR_GAP : 0;
         const laneGap = (milestoneLaneH > 0 && barsLaneH > 0) ? this.LANE_GAP : 0;
         const contentH = milestoneLaneH + laneGap + barsLaneH;
         const rowHeight = Math.max(this.MIN_ROW_HEIGHT, contentH + this.ROW_V_PADDING);
@@ -427,9 +470,9 @@ export class Visual implements IVisual {
         // ── Controls bar ─────────────────────────────────────────────────
         const controls = document.createElement("div");
         controls.style.cssText = [
-            `height:${this.CONTROLS_HEIGHT}px`, "flex-shrink:0",
+            `min-height:${this.CONTROLS_HEIGHT}px`, "flex-shrink:0",
             "display:flex", "align-items:center", "gap:10px",
-            "padding:0 10px", `background:${this.headerBgColor}`,
+            "padding:6px 10px", `background:${this.headerBgColor}`,
             `border-bottom:1px solid ${this.gridColor}`,
             "flex-wrap:wrap"
         ].join(";");
@@ -482,13 +525,65 @@ export class Visual implements IVisual {
         toInput.value = fmtForInput(dateTo);
         toInput.style.cssText = inputStyle;
 
-        const resetBtn = document.createElement("button");
-        resetBtn.textContent = "Reset";
-        resetBtn.style.cssText = [
+        const btnStyle = [
             "background:#112840", `color:${this.textColor}`,
             "border:1px solid #2a5080", "border-radius:4px",
             "padding:3px 10px", "font-size:11px", "cursor:pointer"
         ].join(";");
+
+        const resetBtn = document.createElement("button");
+        resetBtn.textContent = "Reset";
+        resetBtn.style.cssText = btnStyle;
+
+        // ── Quick view: jump straight to a fiscal year/quarter or the current week
+        // instead of picking exact dates. Fiscal year starts Oct 1.
+        const quickWrap = document.createElement("div");
+        quickWrap.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;";
+
+        const fyInput = document.createElement("input");
+        fyInput.type = "number";
+        fyInput.style.cssText = inputStyle + "width:64px;";
+        fyInput.value = String(this.fiscalYearOf(this.userDateTo || dateTo));
+
+        const quarterSelect = document.createElement("select");
+        quarterSelect.style.cssText = inputStyle;
+        [["all", "Full Year"], ["1", "Q1"], ["2", "Q2"], ["3", "Q3"], ["4", "Q4"]].forEach(([val, label]) => {
+            const opt = document.createElement("option");
+            opt.value = val;
+            opt.textContent = label;
+            quarterSelect.appendChild(opt);
+        });
+
+        const goFyBtn = document.createElement("button");
+        goFyBtn.textContent = "Go";
+        goFyBtn.style.cssText = btnStyle;
+        goFyBtn.addEventListener("click", () => {
+            const fy = parseInt(fyInput.value, 10);
+            if (!fy || fy < 1900 || fy > 2200) return;
+            const q = quarterSelect.value;
+            const range = q === "all"
+                ? this.fiscalYearBounds(fy)
+                : this.fiscalQuarterBounds(fy, Number(q) as 1 | 2 | 3 | 4);
+            this.userDateFrom = range.from;
+            this.userDateTo = range.to;
+            this.render(viewport);
+        });
+
+        const weekBtn = document.createElement("button");
+        weekBtn.textContent = "This Week";
+        weekBtn.style.cssText = btnStyle;
+        weekBtn.addEventListener("click", () => {
+            const range = this.thisWeekBounds();
+            this.userDateFrom = range.from;
+            this.userDateTo = range.to;
+            this.render(viewport);
+        });
+
+        quickWrap.appendChild(mkLabel("FY:", fyInput));
+        quickWrap.appendChild(quarterSelect);
+        quickWrap.appendChild(goFyBtn);
+        quickWrap.appendChild(weekBtn);
+        controls.appendChild(quickWrap);
 
         controls.appendChild(mkLabel("From:", fromInput));
         controls.appendChild(mkLabel("To:", toInput));
@@ -622,21 +717,71 @@ export class Visual implements IVisual {
                 .attr("stroke-opacity", 0.85);
         }
 
-        // ── Month header labels ───────────────────────────────────────────
+        // ── Header labels: Fiscal Year / Fiscal Quarter / Month lanes ──────
         monthSvg.append("rect")
             .attr("x", 0).attr("y", 0)
             .attr("width", timelineWidth).attr("height", this.HEADER_HEIGHT)
             .attr("fill", this.headerBgColor);
 
+        interface Span { label: string; x1: number; x2: number; }
+        const fySpans: Span[] = [];
+        const qSpans: Span[] = [];
+        months.forEach((m, i) => {
+            const x1 = xScale(m);
+            const x2 = i + 1 < months.length ? xScale(months[i + 1]) : timelineWidth;
+            const fyLabel = `FY${this.fiscalYearOf(m)}`;
+            const qLabel = `Q${this.fiscalQuarterOf(m)} FY${this.fiscalYearOf(m)}`;
+
+            const lastFy = fySpans[fySpans.length - 1];
+            if (lastFy && lastFy.label === fyLabel) lastFy.x2 = x2;
+            else fySpans.push({ label: fyLabel, x1, x2 });
+
+            const lastQ = qSpans[qSpans.length - 1];
+            if (lastQ && lastQ.label === qLabel) lastQ.x2 = x2;
+            else qSpans.push({ label: qLabel, x1, x2 });
+        });
+
+        const drawSpanLane = (spans: Span[], laneY: number, laneH: number, fontSize: string, fontWeight: string, opacity: number) => {
+            spans.forEach(sp => {
+                monthSvg.append("line")
+                    .attr("x1", sp.x1).attr("y1", laneY)
+                    .attr("x2", sp.x1).attr("y2", laneY + laneH)
+                    .attr("stroke", this.gridColor).attr("stroke-width", 0.6);
+                const w = sp.x2 - sp.x1;
+                if (w > 26) {
+                    monthSvg.append("text")
+                        .attr("x", sp.x1 + w / 2)
+                        .attr("y", laneY + laneH / 2 + 4)
+                        .attr("text-anchor", "middle")
+                        .attr("fill", this.textColor)
+                        .attr("font-size", fontSize)
+                        .attr("font-family", "Segoe UI, Arial, sans-serif")
+                        .attr("font-weight", fontWeight)
+                        .attr("opacity", opacity)
+                        .text(sp.label);
+                }
+            });
+            monthSvg.append("line")
+                .attr("x1", 0).attr("y1", laneY + laneH)
+                .attr("x2", timelineWidth).attr("y2", laneY + laneH)
+                .attr("stroke", this.gridColor).attr("stroke-width", 0.6);
+        };
+
+        const qLaneY = this.FY_LANE_HEIGHT;
+        const monthLaneY = this.FY_LANE_HEIGHT + this.QUARTER_LANE_HEIGHT;
+
+        drawSpanLane(fySpans, 0, this.FY_LANE_HEIGHT, "10.5px", "700", 1);
+        drawSpanLane(qSpans, qLaneY, this.QUARTER_LANE_HEIGHT, "9.5px", "600", 0.85);
+
         months.forEach(m => {
             const x = xScale(m);
             monthSvg.append("line")
-                .attr("x1", x).attr("y1", 0)
+                .attr("x1", x).attr("y1", monthLaneY)
                 .attr("x2", x).attr("y2", this.HEADER_HEIGHT)
                 .attr("stroke", this.gridColor).attr("stroke-width", 0.5);
             monthSvg.append("text")
                 .attr("x", x + 5)
-                .attr("y", this.HEADER_HEIGHT / 2 + 5)
+                .attr("y", monthLaneY + this.MONTH_LANE_HEIGHT / 2 + 4)
                 .attr("fill", this.textColor)
                 .attr("font-size", "11px")
                 .attr("font-family", "Segoe UI, Arial, sans-serif")
@@ -722,7 +867,7 @@ export class Visual implements IVisual {
                     if (!bv.start || !bv.finish || bv.start > bv.finish) return;
                     const def = this.barDefs[i];
                     if (!def) return;
-                    const barY = barsTop + i * (this.BAR_HEIGHT + this.BAR_GAP);
+                    const barY = barsTop + i * (this.barHeight + this.BAR_GAP);
                     const x1 = xScale(bv.start);
                     const x2 = xScale(bv.finish);
                     const clampX1 = Math.max(0, x1);
@@ -732,7 +877,7 @@ export class Visual implements IVisual {
 
                     const bar = svg.append("rect")
                         .attr("x", clampX1).attr("y", barY)
-                        .attr("width", bw).attr("height", this.BAR_HEIGHT)
+                        .attr("width", bw).attr("height", this.barHeight)
                         .attr("fill", def.color)
                         .attr("rx", 3).attr("ry", 3)
                         .style("cursor", "pointer");
@@ -740,10 +885,10 @@ export class Visual implements IVisual {
                     if (bw > 90) {
                         svg.append("text")
                             .attr("x", clampX1 + bw / 2)
-                            .attr("y", barY + this.BAR_HEIGHT / 2 + 4)
+                            .attr("y", barY + this.barHeight / 2 + this.barFontSize / 2 - 1)
                             .attr("text-anchor", "middle")
-                            .attr("font-size", "9px")
-                            .attr("fill", "#041020")
+                            .attr("font-size", `${this.barFontSize}px`)
+                            .attr("fill", this.barFontColor)
                             .attr("font-family", "Segoe UI, Arial, sans-serif")
                             .attr("pointer-events", "none")
                             .attr("font-weight", "600")
