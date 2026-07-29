@@ -92,12 +92,11 @@ export class Visual implements IVisual {
 
     // Colors — every value below is a real swatch from the ACE Visual Design Guide
     // (no invented tints). Dark Blue (#193661) is the true documented brand dark,
-    // used as the canvas; Black is the only other documented "dark" neutral, used
-    // for chrome; Light Blue/Dark-Blue-tints/Grey are applied as low-alpha accents
-    // rather than fabricated new colors.
+    // used as the canvas and chrome (toolbar/header/label column all match the
+    // canvas so there's no mismatched seam); Light Blue/Dark-Blue-tints/Grey are
+    // applied as low-alpha accents rather than fabricated new colors.
     private bgColor = "#193661"; // Dark Blue (DB)
     private textColor = "#F6F6F6"; // Light Grey (LG) Lighter 80%
-    private readonly headerBgColor = "#000000"; // Black
     private readonly locationBgColor = "rgba(80,166,211,0.30)"; // Light Blue (LB) at 30% alpha
     private readonly gridColor = "rgba(193,212,239,0.35)"; // Dark Blue (DB) Lighter 80% at 35% alpha
     private readonly todayColor = "#ef5350"; // functional status marker, not a brand/decorative color
@@ -493,7 +492,7 @@ export class Visual implements IVisual {
         controls.style.cssText = [
             `min-height:${this.CONTROLS_HEIGHT}px`, "flex-shrink:0",
             "display:flex", "align-items:center", "gap:10px",
-            "padding:6px 10px", `background:${this.headerBgColor}`,
+            "padding:6px 10px", `background:${this.bgColor}`,
             `border-bottom:1px solid ${this.gridColor}`,
             "flex-wrap:wrap"
         ].join(";");
@@ -643,7 +642,7 @@ export class Visual implements IVisual {
         headerRow.style.cssText = [
             "display:flex", "flex-shrink:0",
             `height:${this.HEADER_HEIGHT}px`,
-            `background:${this.headerBgColor}`,
+            `background:${this.bgColor}`,
             `border-bottom:2px solid ${this.gridColor}`,
             "z-index:10", "overflow:hidden"
         ].join(";");
@@ -742,7 +741,7 @@ export class Visual implements IVisual {
         monthSvg.append("rect")
             .attr("x", 0).attr("y", 0)
             .attr("width", timelineWidth).attr("height", this.HEADER_HEIGHT)
-            .attr("fill", this.headerBgColor);
+            .attr("fill", this.bgColor);
 
         interface Span { label: string; x1: number; x2: number; }
         const fySpans: Span[] = [];
