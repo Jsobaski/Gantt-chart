@@ -88,16 +88,33 @@ export class Visual implements IVisual {
     // Bar appearance (defaults overridden by format panel)
     private barHeight = 11;
     private barFontSize = 9;
-    private barFontColor = "#041020";
+    private barFontColor = "#000000";
 
-    // Colors — brand palette (ACE Visual Design Guide): Dark Blue family for the
-    // canvas/chrome, Light Blue as an accent, defaults overridden by format panel.
-    private bgColor = "#0D1B30";
-    private textColor = "#F6F6F6";
-    private readonly headerBgColor = "#132849";
-    private readonly locationBgColor = "#193661";
-    private readonly gridColor = "#1D5674";
-    private readonly todayColor = "#ef5350";
+    // Colors — every value below is a real swatch from the ACE Visual Design Guide
+    // (no invented tints). Dark Blue (#193661) is the true documented brand dark,
+    // used as the canvas; Black is the only other documented "dark" neutral, used
+    // for chrome; Light Blue/Dark-Blue-tints/Grey are applied as low-alpha accents
+    // rather than fabricated new colors.
+    private bgColor = "#193661"; // Dark Blue (DB)
+    private textColor = "#F6F6F6"; // Light Grey (LG) Lighter 80%
+    private readonly headerBgColor = "#000000"; // Black
+    private readonly locationBgColor = "rgba(80,166,211,0.30)"; // Light Blue (LB) at 30% alpha
+    private readonly gridColor = "rgba(193,212,239,0.35)"; // Dark Blue (DB) Lighter 80% at 35% alpha
+    private readonly todayColor = "#ef5350"; // functional status marker, not a brand/decorative color
+
+    // Auto-assigned series colors (before any manual override in "Series Colors")
+    // cycle through the brand's documented accent/neutral tones instead of Power
+    // BI's generic report-theme palette, so bars/diamonds are on-brand by default.
+    private readonly BRAND_SERIES_PALETTE = [
+        "#50A6D3", // Light Blue (LB)
+        "#84A8DF", // Dark Blue (DB) Lighter 60%
+        "#A8AAAC", // Medium Grey (MG)
+        "#B9DBED", // Light Blue (LB) Lighter 60%
+        "#C1D4EF", // Dark Blue (DB) Lighter 80%
+        "#E9E9E9", // Light Grey (LG)
+        "#DCEDF6", // Light Blue (LB) Lighter 80%
+        "#DCDDDE"  // Medium Grey (MG) Lighter 60%
+    ];
 
     constructor(options: VisualConstructorOptions) {
         this.events = options.host.eventService;
@@ -179,11 +196,13 @@ export class Visual implements IVisual {
     }
 
     // Per-field override (set via the "Series Colors" section of the Format pane)
-    // takes priority over the automatically assigned palette color.
-    private resolveColor(col: powerbi.DataViewMetadataColumn, fallbackKey: string): string {
+    // takes priority over the automatically assigned brand color. `seriesIndex` is
+    // a running count across ALL bar + milestone series combined, so every bound
+    // field gets a distinct brand tone (not just each bar or each milestone alone).
+    private resolveColor(col: powerbi.DataViewMetadataColumn, seriesIndex: number): string {
         const override = (col.objects as Record<string, Record<string, { solid?: { color?: string } }>> | undefined)
             ?.dataColors?.fill?.solid?.color;
-        return override || this.host.colorPalette.getColor(fallbackKey).value;
+        return override || this.BRAND_SERIES_PALETTE[seriesIndex % this.BRAND_SERIES_PALETTE.length];
     }
 
     // Builds one Color Picker slice per currently-bound bar/milestone field, so the
@@ -289,16 +308,18 @@ export class Visual implements IVisual {
         // Rename a field via right-click > "Rename for this visual" in Power BI to
         // control exactly what shows up in the legend and tooltips. A per-field color
         // set in the Format pane ("Series Colors") persists on that column's `objects`
-        // and takes priority over the automatically assigned palette color.
-        this.milestoneDefs = milestoneCols.map(c => ({
+        // and takes priority over the automatically assigned brand color. Bars are
+        // indexed first, milestones continue the count, so every series (bar or
+        // milestone) gets a distinct brand tone.
+        this.barDefs = barStartCols.slice(0, barCount).map((c, i) => ({
             name: c.name,
             queryName: columns[c.idx].queryName || c.name,
-            color: this.resolveColor(columns[c.idx], `milestone_${c.name}`)
+            color: this.resolveColor(columns[c.idx], i)
         }));
-        this.barDefs = barStartCols.slice(0, barCount).map(c => ({
+        this.milestoneDefs = milestoneCols.map((c, i) => ({
             name: c.name,
             queryName: columns[c.idx].queryName || c.name,
-            color: this.resolveColor(columns[c.idx], `bar_${c.name}`)
+            color: this.resolveColor(columns[c.idx], barCount + i)
         }));
 
         const getExtraFields = (row: powerbi.DataViewTableRow): { name: string; value: string }[] => {
@@ -812,7 +833,7 @@ export class Visual implements IVisual {
                 svg.append("rect")
                     .attr("x", 0).attr("y", y)
                     .attr("width", timelineWidth).attr("height", rowHeight)
-                    .attr("fill", this.locationBgColor).attr("fill-opacity", 0.45);
+                    .attr("fill", this.locationBgColor);
                 svg.append("line")
                     .attr("x1", 0).attr("y1", y + rowHeight)
                     .attr("x2", timelineWidth).attr("y2", y + rowHeight)

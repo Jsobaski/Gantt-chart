@@ -7,13 +7,14 @@ import FormattingSettingsModel = formattingSettings.Model;
 import FormattingSettingsCard = formattingSettings.SimpleCard;
 import FormattingSettingsSlice = formattingSettings.Slice;
 
-// Defaults follow the ACE brand palette (Color Palette guide): Dark Blue Darker 50%
-// (#0D1B30) for the canvas, Light Grey Lighter 80% (#F6F6F6) for text.
+// Defaults are real documented swatches from the ACE Visual Design Guide (no
+// invented tints): Dark Blue (#193661, the primary brand dark) for the canvas,
+// Light Grey Lighter 80% (#F6F6F6) for text.
 class GanttConfigCard extends FormattingSettingsCard {
     bgColor = new formattingSettings.ColorPicker({
         name: "bgColor",
         displayName: "Background Color",
-        value: { value: "#0D1B30" }
+        value: { value: "#193661" }
     });
 
     textColor = new formattingSettings.ColorPicker({
@@ -45,7 +46,7 @@ class GanttConfigCard extends FormattingSettingsCard {
     barFontColor = new formattingSettings.ColorPicker({
         name: "barFontColor",
         displayName: "Bar Label Font Color",
-        value: { value: "#041020" }
+        value: { value: "#000000" }
     });
 
     name: string = "ganttConfig";
