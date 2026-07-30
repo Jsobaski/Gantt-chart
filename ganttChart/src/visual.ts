@@ -59,6 +59,9 @@ export class Visual implements IVisual {
     private barDefs: SeriesDef[] = [];
     private userDateFrom: Date | null = null;
     private userDateTo: Date | null = null;
+    // Live viewer toggle (not a persisted report setting) so anyone looking at the
+    // report can flip between fiscal-year and calendar-year framing on the fly.
+    private useFiscalYear = true;
 
     private clearEl(el: HTMLElement): void {
         while (el.firstChild) el.removeChild(el.firstChild);
@@ -76,7 +79,6 @@ export class Visual implements IVisual {
     private readonly FY_LANE_HEIGHT = 17;
     private readonly QUARTER_LANE_HEIGHT = 17;
     private readonly MONTH_LANE_HEIGHT = 24;
-    private readonly HEADER_HEIGHT = this.FY_LANE_HEIGHT + this.QUARTER_LANE_HEIGHT + this.MONTH_LANE_HEIGHT;
     private readonly CONTROLS_HEIGHT = 44;
     private readonly BAR_GAP = 2;
     private readonly MILESTONE_RADIUS = 7;
@@ -90,6 +92,11 @@ export class Visual implements IVisual {
     private barFontSize = 9;
     private barFontColor = "#000000";
 
+    // Header lane visibility (defaults overridden by format panel)
+    private showYearLane = true;
+    private showQuarterLane = true;
+    private showMonthLane = true;
+
     // Colors — every value below is a real swatch from the ACE Visual Design Guide
     // (no invented tints). Dark Blue (#193661) is the true documented brand dark,
     // used as the canvas and chrome (toolbar/header/label column all match the
@@ -97,9 +104,12 @@ export class Visual implements IVisual {
     // applied as low-alpha accents rather than fabricated new colors.
     private bgColor = "#193661"; // Dark Blue (DB)
     private textColor = "#F6F6F6"; // Light Grey (LG) Lighter 80%
-    private readonly locationBgColor = "rgba(80,166,211,0.30)"; // Light Blue (LB) at 30% alpha
+    // locationBgColor is derived each applySettings() call from the user-picked
+    // "Location Row Color" hex, rendered at fixed 30% alpha so it stays a soft
+    // tinted band rather than a harsh solid block regardless of hue chosen.
+    private locationBgColor = "rgba(80,166,211,0.30)";
     private readonly gridColor = "rgba(193,212,239,0.35)"; // Dark Blue (DB) Lighter 80% at 35% alpha
-    private readonly todayColor = "#ef5350"; // functional status marker, not a brand/decorative color
+    private todayColor = "#EF5350"; // functional status marker; defaults red, overridable
 
     // Auto-assigned series colors (before any manual override in "Series Colors")
     // cycle through the brand's documented accent/neutral tones instead of Power
@@ -154,6 +164,15 @@ export class Visual implements IVisual {
         }
     }
 
+    private hexToRgba(hex: string, alpha: number): string {
+        const clean = hex.replace("#", "");
+        const full = clean.length === 3 ? clean.split("").map(c => c + c).join("") : clean;
+        const n = parseInt(full, 16);
+        if (isNaN(n)) return `rgba(80,166,211,${alpha})`;
+        const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+        return `rgba(${r},${g},${b},${alpha})`;
+    }
+
     private applySettings(): void {
         if (!this.formattingSettings) return;
         const s = this.formattingSettings.ganttConfig;
@@ -162,6 +181,11 @@ export class Visual implements IVisual {
         this.barHeight = s.barHeight.value ?? this.barHeight;
         this.barFontSize = s.barFontSize.value ?? this.barFontSize;
         this.barFontColor = s.barFontColor.value.value || this.barFontColor;
+        this.todayColor = s.todayColor.value.value || this.todayColor;
+        this.locationBgColor = this.hexToRgba(s.locationColor.value.value || "#50A6D3", 0.30);
+        this.showYearLane = s.showYearLane.value;
+        this.showQuarterLane = s.showQuarterLane.value;
+        this.showMonthLane = s.showMonthLane.value;
     }
 
     // FY starts Oct 1: Oct-Dec of calendar year Y belong to FY(Y+1).
@@ -185,6 +209,30 @@ export class Visual implements IVisual {
         const startYear = q === 1 ? fy - 1 : fy;
         const endYear = startMonth + 3 > 11 ? startYear + 1 : startYear;
         return { from: new Date(startYear, startMonth, 1), to: new Date(endYear, (startMonth + 3) % 12, 1) };
+    }
+
+    // Dispatchers used by rendering/quick-jump code so the same call sites work
+    // whether the live viewer toggle is set to Fiscal Year or plain Calendar Year.
+    private periodYearOf(d: Date): number {
+        return this.useFiscalYear ? this.fiscalYearOf(d) : d.getFullYear();
+    }
+
+    private periodQuarterOf(d: Date): number {
+        return this.useFiscalYear ? this.fiscalQuarterOf(d) : Math.floor(d.getMonth() / 3) + 1;
+    }
+
+    private periodYearBounds(y: number): { from: Date; to: Date } {
+        return this.useFiscalYear ? this.fiscalYearBounds(y) : { from: new Date(y, 0, 1), to: new Date(y + 1, 0, 1) };
+    }
+
+    private periodQuarterBounds(y: number, q: 1 | 2 | 3 | 4): { from: Date; to: Date } {
+        if (this.useFiscalYear) return this.fiscalQuarterBounds(y, q);
+        const startMonth = (q - 1) * 3;
+        return { from: new Date(y, startMonth, 1), to: new Date(y, startMonth + 3, 1) };
+    }
+
+    private periodLabel(y: number): string {
+        return this.useFiscalYear ? `FY${y}` : `${y}`;
     }
 
     private thisWeekBounds(): { from: Date; to: Date } {
@@ -423,6 +471,16 @@ export class Visual implements IVisual {
         return { rowHeight, contentH, milestoneLaneH, laneGap, barsLaneH };
     }
 
+    // Header lanes (Year/Quarter/Month) can each be hidden via the Format pane, so
+    // the header's total height and each lane's vertical offset are computed fresh
+    // per render instead of being a fixed constant.
+    private computeHeaderMetrics(): { headerHeight: number; yearH: number; quarterH: number; monthH: number; quarterY: number; monthY: number } {
+        const yearH = this.showYearLane ? this.FY_LANE_HEIGHT : 0;
+        const quarterH = this.showQuarterLane ? this.QUARTER_LANE_HEIGHT : 0;
+        const monthH = this.showMonthLane ? this.MONTH_LANE_HEIGHT : 0;
+        return { headerHeight: yearH + quarterH + monthH, yearH, quarterH, monthH, quarterY: yearH, monthY: yearH + quarterH };
+    }
+
     private render(viewport: IViewport): void {
         this.clearEl(this.container);
 
@@ -441,6 +499,7 @@ export class Visual implements IVisual {
         const dateTo = this.userDateTo || dataTo;
 
         const { rowHeight, contentH, milestoneLaneH, laneGap } = this.computeRowMetrics();
+        const { headerHeight, quarterY: quarterLaneY, monthY: monthLaneY } = this.computeHeaderMetrics();
 
         const timelineWidth = Math.max(W - this.LABEL_WIDTH, 500);
         const totalBodyHeight = displayRows.length * rowHeight;
@@ -555,15 +614,23 @@ export class Visual implements IVisual {
         resetBtn.textContent = "Reset";
         resetBtn.style.cssText = btnStyle;
 
-        // ── Quick view: jump straight to a fiscal year/quarter or the current week
-        // instead of picking exact dates. Fiscal year starts Oct 1.
+        // ── Quick view: jump straight to a fiscal/calendar year or quarter, or the
+        // current week, instead of picking exact dates.
         const quickWrap = document.createElement("div");
         quickWrap.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;";
+
+        const yearModeBtn = document.createElement("button");
+        yearModeBtn.textContent = this.useFiscalYear ? "View: Fiscal Year" : "View: Calendar Year";
+        yearModeBtn.style.cssText = btnStyle;
+        yearModeBtn.addEventListener("click", () => {
+            this.useFiscalYear = !this.useFiscalYear;
+            this.render(viewport);
+        });
 
         const fyInput = document.createElement("input");
         fyInput.type = "number";
         fyInput.style.cssText = inputStyle + "width:64px;";
-        fyInput.value = String(this.fiscalYearOf(this.userDateTo || dateTo));
+        fyInput.value = String(this.periodYearOf(this.userDateTo || dateTo));
 
         const quarterSelect = document.createElement("select");
         quarterSelect.style.cssText = inputStyle;
@@ -578,12 +645,12 @@ export class Visual implements IVisual {
         goFyBtn.textContent = "Go";
         goFyBtn.style.cssText = btnStyle;
         goFyBtn.addEventListener("click", () => {
-            const fy = parseInt(fyInput.value, 10);
-            if (!fy || fy < 1900 || fy > 2200) return;
+            const y = parseInt(fyInput.value, 10);
+            if (!y || y < 1900 || y > 2200) return;
             const q = quarterSelect.value;
             const range = q === "all"
-                ? this.fiscalYearBounds(fy)
-                : this.fiscalQuarterBounds(fy, Number(q) as 1 | 2 | 3 | 4);
+                ? this.periodYearBounds(y)
+                : this.periodQuarterBounds(y, Number(q) as 1 | 2 | 3 | 4);
             this.userDateFrom = range.from;
             this.userDateTo = range.to;
             this.render(viewport);
@@ -599,7 +666,8 @@ export class Visual implements IVisual {
             this.render(viewport);
         });
 
-        quickWrap.appendChild(mkLabel("FY:", fyInput));
+        quickWrap.appendChild(yearModeBtn);
+        quickWrap.appendChild(mkLabel(this.useFiscalYear ? "FY:" : "Year:", fyInput));
         quickWrap.appendChild(quarterSelect);
         quickWrap.appendChild(goFyBtn);
         quickWrap.appendChild(weekBtn);
@@ -641,7 +709,7 @@ export class Visual implements IVisual {
         const headerRow = document.createElement("div");
         headerRow.style.cssText = [
             "display:flex", "flex-shrink:0",
-            `height:${this.HEADER_HEIGHT}px`,
+            `height:${headerHeight}px`,
             `background:${this.bgColor}`,
             `border-bottom:2px solid ${this.gridColor}`,
             "z-index:10", "overflow:hidden"
@@ -661,7 +729,7 @@ export class Visual implements IVisual {
         const monthWrapper = document.createElement("div");
         monthWrapper.style.cssText = "flex:1;overflow:hidden;position:relative;";
         const monthSvgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        monthSvgEl.style.cssText = `width:${timelineWidth}px;height:${this.HEADER_HEIGHT}px;display:block;`;
+        monthSvgEl.style.cssText = `width:${timelineWidth}px;height:${headerHeight}px;display:block;`;
         monthWrapper.appendChild(monthSvgEl);
         headerRow.appendChild(monthWrapper);
         outer.appendChild(headerRow);
@@ -737,24 +805,25 @@ export class Visual implements IVisual {
                 .attr("stroke-opacity", 0.85);
         }
 
-        // ── Header labels: Fiscal Year / Fiscal Quarter / Month lanes ──────
+        // ── Header labels: Year / Quarter / Month lanes (each independently
+        // toggleable, and Year/Quarter switch between fiscal and calendar framing) ──
         monthSvg.append("rect")
             .attr("x", 0).attr("y", 0)
-            .attr("width", timelineWidth).attr("height", this.HEADER_HEIGHT)
+            .attr("width", timelineWidth).attr("height", headerHeight)
             .attr("fill", this.bgColor);
 
         interface Span { label: string; x1: number; x2: number; }
-        const fySpans: Span[] = [];
+        const yearSpans: Span[] = [];
         const qSpans: Span[] = [];
         months.forEach((m, i) => {
             const x1 = xScale(m);
             const x2 = i + 1 < months.length ? xScale(months[i + 1]) : timelineWidth;
-            const fyLabel = `FY${this.fiscalYearOf(m)}`;
-            const qLabel = `Q${this.fiscalQuarterOf(m)} FY${this.fiscalYearOf(m)}`;
+            const yearLabel = this.periodLabel(this.periodYearOf(m));
+            const qLabel = `Q${this.periodQuarterOf(m)} ${yearLabel}`;
 
-            const lastFy = fySpans[fySpans.length - 1];
-            if (lastFy && lastFy.label === fyLabel) lastFy.x2 = x2;
-            else fySpans.push({ label: fyLabel, x1, x2 });
+            const lastYear = yearSpans[yearSpans.length - 1];
+            if (lastYear && lastYear.label === yearLabel) lastYear.x2 = x2;
+            else yearSpans.push({ label: yearLabel, x1, x2 });
 
             const lastQ = qSpans[qSpans.length - 1];
             if (lastQ && lastQ.label === qLabel) lastQ.x2 = x2;
@@ -787,17 +856,14 @@ export class Visual implements IVisual {
                 .attr("stroke", this.gridColor).attr("stroke-width", 0.6);
         };
 
-        const qLaneY = this.FY_LANE_HEIGHT;
-        const monthLaneY = this.FY_LANE_HEIGHT + this.QUARTER_LANE_HEIGHT;
+        if (this.showYearLane) drawSpanLane(yearSpans, 0, this.FY_LANE_HEIGHT, "10.5px", "700", 1);
+        if (this.showQuarterLane) drawSpanLane(qSpans, quarterLaneY, this.QUARTER_LANE_HEIGHT, "9.5px", "600", 0.85);
 
-        drawSpanLane(fySpans, 0, this.FY_LANE_HEIGHT, "10.5px", "700", 1);
-        drawSpanLane(qSpans, qLaneY, this.QUARTER_LANE_HEIGHT, "9.5px", "600", 0.85);
-
-        months.forEach(m => {
+        if (this.showMonthLane) months.forEach(m => {
             const x = xScale(m);
             monthSvg.append("line")
                 .attr("x1", x).attr("y1", monthLaneY)
-                .attr("x2", x).attr("y2", this.HEADER_HEIGHT)
+                .attr("x2", x).attr("y2", headerHeight)
                 .attr("stroke", this.gridColor).attr("stroke-width", 0.5);
             monthSvg.append("text")
                 .attr("x", x + 5)

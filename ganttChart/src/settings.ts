@@ -49,6 +49,36 @@ class GanttConfigCard extends FormattingSettingsCard {
         value: { value: "#000000" }
     });
 
+    locationColor = new formattingSettings.ColorPicker({
+        name: "locationColor",
+        displayName: "Location Row Color",
+        value: { value: "#50A6D3" }
+    });
+
+    todayColor = new formattingSettings.ColorPicker({
+        name: "todayColor",
+        displayName: "Today Line Color",
+        value: { value: "#EF5350" }
+    });
+
+    showYearLane = new formattingSettings.ToggleSwitch({
+        name: "showYearLane",
+        displayName: "Show Year Row",
+        value: true
+    });
+
+    showQuarterLane = new formattingSettings.ToggleSwitch({
+        name: "showQuarterLane",
+        displayName: "Show Quarter Row",
+        value: true
+    });
+
+    showMonthLane = new formattingSettings.ToggleSwitch({
+        name: "showMonthLane",
+        displayName: "Show Month Row",
+        value: true
+    });
+
     name: string = "ganttConfig";
     displayName: string = "Gantt Settings";
     slices: Array<FormattingSettingsSlice> = [
@@ -56,7 +86,12 @@ class GanttConfigCard extends FormattingSettingsCard {
         this.textColor,
         this.barHeight,
         this.barFontSize,
-        this.barFontColor
+        this.barFontColor,
+        this.locationColor,
+        this.todayColor,
+        this.showYearLane,
+        this.showQuarterLane,
+        this.showMonthLane
     ];
 }
 

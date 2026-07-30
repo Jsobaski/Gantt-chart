@@ -59,11 +59,16 @@
     "objects": {
         "ganttConfig": {
             "properties": {
-                "bgColor":      { "type": { "fill": { "solid": { "color": true } } } },
-                "textColor":    { "type": { "fill": { "solid": { "color": true } } } },
-                "barHeight":    { "type": { "numeric": true } },
-                "barFontSize":  { "type": { "numeric": true } },
-                "barFontColor": { "type": { "fill": { "solid": { "color": true } } } }
+                "bgColor":         { "type": { "fill": { "solid": { "color": true } } } },
+                "textColor":       { "type": { "fill": { "solid": { "color": true } } } },
+                "barHeight":       { "type": { "numeric": true } },
+                "barFontSize":     { "type": { "numeric": true } },
+                "barFontColor":    { "type": { "fill": { "solid": { "color": true } } } },
+                "locationColor":   { "type": { "fill": { "solid": { "color": true } } } },
+                "todayColor":      { "type": { "fill": { "solid": { "color": true } } } },
+                "showYearLane":    { "type": { "bool": true } },
+                "showQuarterLane": { "type": { "bool": true } },
+                "showMonthLane":   { "type": { "bool": true } }
             }
         },
         "dataColors": {
