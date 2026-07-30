@@ -35,6 +35,12 @@
             "name": "tooltipFields",
             "kind": "GroupingOrMeasure",
             "description": "Drag any extra columns here to show them in every bar and milestone tooltip"
+        },
+        {
+            "displayName": "Series-Specific Tooltip Fields",
+            "name": "seriesTooltipFields",
+            "kind": "GroupingOrMeasure",
+            "description": "Extra tooltip info for ONE specific bar or milestone series, not all of them. Rename the field (right-click > Rename for this visual) so its name STARTS WITH the exact series name shown in the legend — e.g. rename to \"P6 Status\" to attach it only to the P6 series' tooltip, not Maximo's."
         }
     ],
     "dataViewMappings": [
@@ -47,7 +53,8 @@
                         { "for": { "in": "milestoneDate" } },
                         { "for": { "in": "barStart" } },
                         { "for": { "in": "barFinish" } },
-                        { "for": { "in": "tooltipFields" } }
+                        { "for": { "in": "tooltipFields" } },
+                        { "for": { "in": "seriesTooltipFields" } }
                     ],
                     "dataReductionAlgorithm": {
                         "top": { "count": 2000 }

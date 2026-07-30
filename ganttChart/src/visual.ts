@@ -21,19 +21,33 @@ interface SeriesDef {
     color: string;
 }
 
+interface TooltipField {
+    name: string;
+    value: string;
+}
+
 interface BarValue {
     start: Date | null;
     finish: Date | null;
+    // Fields from "Series-Specific Tooltip Fields" name-matched to this bar only.
+    extra: TooltipField[];
+}
+
+interface MilestoneValue {
+    date: Date | null;
+    // Fields from "Series-Specific Tooltip Fields" name-matched to this milestone only.
+    extra: TooltipField[];
 }
 
 interface GanttRow {
     location: string;
     projectName: string;
     // Aligned by index with this.milestoneDefs
-    milestones: (Date | null)[];
+    milestones: MilestoneValue[];
     // Aligned by index with this.barDefs
     bars: BarValue[];
-    extraFields: { name: string; value: string }[];
+    // Shown on every bar/milestone tooltip ("Additional Tooltip Fields")
+    extraFields: TooltipField[];
 }
 
 interface LocationGroup {
@@ -131,7 +145,7 @@ export class Visual implements IVisual {
         this.formattingSettingsService = new FormattingSettingsService();
         this.container = options.element;
         this.container.style.overflow = "hidden";
-        this.container.style.fontFamily = "Segoe UI, Arial, sans-serif";
+        this.container.style.fontFamily = "Arial, sans-serif";
         this.container.style.fontSize = "12px";
     }
 
@@ -340,12 +354,14 @@ export class Visual implements IVisual {
         const barStartCols: { idx: number; name: string }[] = [];
         const barFinishCols: { idx: number; name: string }[] = [];
         const tooltipCols: { idx: number; name: string }[] = [];
+        const seriesTooltipCols: { idx: number; name: string }[] = [];
         columns.forEach((col, i) => {
             const name = col.displayName || col.queryName || `Field ${i}`;
             if (col.roles?.["milestoneDate"]) milestoneCols.push({ idx: i, name });
             if (col.roles?.["barStart"]) barStartCols.push({ idx: i, name });
             if (col.roles?.["barFinish"]) barFinishCols.push({ idx: i, name });
             if (col.roles?.["tooltipFields"]) tooltipCols.push({ idx: i, name });
+            if (col.roles?.["seriesTooltipFields"]) seriesTooltipCols.push({ idx: i, name });
         });
 
         // Bar starts/finishes are paired positionally: 1st Start field with 1st Finish
@@ -369,15 +385,52 @@ export class Visual implements IVisual {
             color: this.resolveColor(columns[c.idx], barCount + i)
         }));
 
-        const getExtraFields = (row: powerbi.DataViewTableRow): { name: string; value: string }[] => {
-            const out: { name: string; value: string }[] = [];
+        const formatCellValue = (v: powerbi.PrimitiveValue): string | null => {
+            if (v === null || v === undefined || v === "") return null;
+            if (v instanceof Date) return this.fmtFull(v);
+            if (typeof v === "number") return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+            return String(v).trim() || null;
+        };
+
+        const getExtraFields = (row: powerbi.DataViewTableRow): TooltipField[] => {
+            const out: TooltipField[] = [];
             tooltipCols.forEach(({ idx, name }) => {
-                const v = row[idx];
-                if (v === null || v === undefined || v === "") return;
-                let text: string;
-                if (v instanceof Date) text = this.fmtFull(v);
-                else if (typeof v === "number") text = v.toLocaleString(undefined, { maximumFractionDigits: 2 });
-                else text = String(v).trim();
+                const text = formatCellValue(row[idx]);
+                if (text) out.push({ name, value: text });
+            });
+            return out;
+        };
+
+        // Each "Series-Specific Tooltip Fields" column is attached to exactly one
+        // bar or milestone series by name: rename the field (right-click > Rename
+        // for this visual) so it STARTS WITH that series' exact name. If several
+        // series names match, the longest (most specific) match wins; if none
+        // match, the field is silently dropped rather than shown everywhere.
+        const barSeriesTooltipCols: { idx: number; name: string }[][] = this.barDefs.map(() => []);
+        const msSeriesTooltipCols: { idx: number; name: string }[][] = this.milestoneDefs.map(() => []);
+        seriesTooltipCols.forEach(col => {
+            const lname = col.name.toLowerCase();
+            let bestType: "bar" | "milestone" | null = null;
+            let bestIndex = -1;
+            let bestLen = -1;
+            this.barDefs.forEach((def, i) => {
+                if (def.name && lname.startsWith(def.name.toLowerCase()) && def.name.length > bestLen) {
+                    bestType = "bar"; bestIndex = i; bestLen = def.name.length;
+                }
+            });
+            this.milestoneDefs.forEach((def, i) => {
+                if (def.name && lname.startsWith(def.name.toLowerCase()) && def.name.length > bestLen) {
+                    bestType = "milestone"; bestIndex = i; bestLen = def.name.length;
+                }
+            });
+            if (bestType === "bar") barSeriesTooltipCols[bestIndex].push(col);
+            else if (bestType === "milestone") msSeriesTooltipCols[bestIndex].push(col);
+        });
+
+        const getSeriesExtra = (row: powerbi.DataViewTableRow, cols: { idx: number; name: string }[]): TooltipField[] => {
+            const out: TooltipField[] = [];
+            cols.forEach(({ idx, name }) => {
+                const text = formatCellValue(row[idx]);
                 if (text) out.push({ name, value: text });
             });
             return out;
@@ -389,17 +442,21 @@ export class Visual implements IVisual {
             const projectName = getString(row, "projectName");
             if (!location && !projectName) return;
 
-            const milestones = milestoneCols.map(c => this.parseSingleValue(row[c.idx]));
+            const milestones: MilestoneValue[] = milestoneCols.map((c, i) => ({
+                date: this.parseSingleValue(row[c.idx]),
+                extra: getSeriesExtra(row, msSeriesTooltipCols[i])
+            }));
             const bars: BarValue[] = [];
             for (let i = 0; i < barCount; i++) {
                 bars.push({
                     start: this.parseSingleValue(row[barStartCols[i].idx]),
-                    finish: this.parseSingleValue(row[barFinishCols[i].idx])
+                    finish: this.parseSingleValue(row[barFinishCols[i].idx]),
+                    extra: getSeriesExtra(row, barSeriesTooltipCols[i])
                 });
             }
 
             const hasBar = bars.some(b => b.start && b.finish);
-            const hasMilestone = milestones.some(m => m !== null);
+            const hasMilestone = milestones.some(m => m.date !== null);
             if (!hasBar && !hasMilestone) return;
 
             rows.push({ location, projectName, milestones, bars, extraFields: getExtraFields(row) });
@@ -424,10 +481,14 @@ export class Visual implements IVisual {
         return groups;
     }
 
-    private computeDateRange(rows: GanttRow[]): { from: Date; to: Date } {
+    // Fallback used only when the current fiscal/calendar year has no data at all
+    // (see defaultDateRange) — spans the actual min-to-max extent of the data,
+    // so a portfolio with no "current year" work still opens to something useful
+    // instead of a blank chart.
+    private dataExtentRange(rows: GanttRow[]): { from: Date; to: Date } {
         const dates: Date[] = [];
         rows.forEach(r => {
-            r.milestones.forEach(d => { if (d) dates.push(d); });
+            r.milestones.forEach(m => { if (m.date) dates.push(m.date); });
             r.bars.forEach(b => {
                 if (b.start) dates.push(b.start);
                 if (b.finish) dates.push(b.finish);
@@ -448,6 +509,22 @@ export class Visual implements IVisual {
             from: new Date(minD.getFullYear(), minD.getMonth() - 1, 1),
             to: new Date(maxD.getFullYear(), maxD.getMonth() + 2, 1)
         };
+    }
+
+    // Default view on first load / after Reset: the current fiscal or calendar
+    // year (matching the live FY/CY toggle), not the full min-to-max data span —
+    // with multi-year messy data (some projects years old, some a decade out),
+    // showing everything would be unreadable. Falls back to the actual data
+    // extent only if the current period has no data at all, so it's never blank.
+    private defaultDateRange(): { from: Date; to: Date } {
+        const range = this.periodYearBounds(this.periodYearOf(new Date()));
+        const hasDataInRange = this.allRows.some(r =>
+            r.milestones.some(m => m.date && m.date >= range.from && m.date < range.to) ||
+            r.bars.some(b =>
+                (b.start && b.start >= range.from && b.start < range.to) ||
+                (b.finish && b.finish >= range.from && b.finish < range.to))
+        );
+        return hasDataInRange ? range : this.dataExtentRange(this.allRows);
     }
 
     private fmtShort(d: Date): string {
@@ -494,9 +571,9 @@ export class Visual implements IVisual {
             g.rows.forEach(r => displayRows.push({ type: "project", data: r }));
         });
 
-        const { from: dataFrom, to: dataTo } = this.computeDateRange(this.allRows);
-        const dateFrom = this.userDateFrom || dataFrom;
-        const dateTo = this.userDateTo || dataTo;
+        const { from: defaultFrom, to: defaultTo } = this.defaultDateRange();
+        const dateFrom = this.userDateFrom || defaultFrom;
+        const dateTo = this.userDateTo || defaultTo;
 
         const { rowHeight, contentH, milestoneLaneH, laneGap } = this.computeRowMetrics();
         const { headerHeight, quarterY: quarterLaneY, monthY: monthLaneY } = this.computeHeaderMetrics();
@@ -844,7 +921,7 @@ export class Visual implements IVisual {
                         .attr("text-anchor", "middle")
                         .attr("fill", this.textColor)
                         .attr("font-size", fontSize)
-                        .attr("font-family", "Segoe UI, Arial, sans-serif")
+                        .attr("font-family", "Arial, sans-serif")
                         .attr("font-weight", fontWeight)
                         .attr("opacity", opacity)
                         .text(sp.label);
@@ -870,7 +947,7 @@ export class Visual implements IVisual {
                 .attr("y", monthLaneY + this.MONTH_LANE_HEIGHT / 2 + 4)
                 .attr("fill", this.textColor)
                 .attr("font-size", "11px")
-                .attr("font-family", "Segoe UI, Arial, sans-serif")
+                .attr("font-family", "Arial, sans-serif")
                 .attr("font-weight", "600")
                 .text(d3.timeFormat("%b %Y")(m));
         });
@@ -975,7 +1052,7 @@ export class Visual implements IVisual {
                             .attr("text-anchor", "middle")
                             .attr("font-size", `${this.barFontSize}px`)
                             .attr("fill", this.barFontColor)
-                            .attr("font-family", "Segoe UI, Arial, sans-serif")
+                            .attr("font-family", "Arial, sans-serif")
                             .attr("pointer-events", "none")
                             .attr("font-weight", "600")
                             .text(`${def.name}: ${this.fmtShort(bv.start)} - ${this.fmtShort(bv.finish)}`);
@@ -990,10 +1067,10 @@ export class Visual implements IVisual {
                 });
 
                 // ── Milestone diamonds (one lane, N diamonds across the timeline) ──
-                d.milestones.forEach((date, i) => {
+                d.milestones.forEach((ms, i) => {
                     const def = this.milestoneDefs[i];
-                    if (!date || !def || date < dateFrom || date > dateTo) return;
-                    const mx = xScale(date);
+                    if (!ms.date || !def || ms.date < dateFrom || ms.date > dateTo) return;
+                    const mx = xScale(ms.date);
                     const r = this.MILESTONE_RADIUS;
                     const pts = `${mx},${milestoneCenterY - r} ${mx + r},${milestoneCenterY} ${mx},${milestoneCenterY + r} ${mx - r},${milestoneCenterY}`;
 
@@ -1039,10 +1116,10 @@ export class Visual implements IVisual {
         return row;
     }
 
-    private appendExtraFieldNodes(nodes: Node[], d: GanttRow): void {
-        if (!d.extraFields.length) return;
+    private appendExtraFieldNodes(nodes: Node[], fields: TooltipField[]): void {
+        if (!fields.length) return;
         nodes.push(this.mkHR());
-        d.extraFields.forEach(f => nodes.push(this.tipRow(`${f.name}:`, f.value)));
+        fields.forEach(f => nodes.push(this.tipRow(`${f.name}:`, f.value)));
     }
 
     private buildTipHeader(d: GanttRow): Node[] {
@@ -1078,7 +1155,8 @@ export class Visual implements IVisual {
             nodes.push(this.tipRow("Duration:", `${days} days`));
         }
 
-        this.appendExtraFieldNodes(nodes, d);
+        this.appendExtraFieldNodes(nodes, bv?.extra ?? []);
+        this.appendExtraFieldNodes(nodes, d.extraFields);
         return nodes;
     }
 
@@ -1086,17 +1164,18 @@ export class Visual implements IVisual {
     private buildMilestoneTip(d: GanttRow, msIndex: number): Node[] {
         const nodes = this.buildTipHeader(d);
         const def = this.milestoneDefs[msIndex];
-        const date = d.milestones[msIndex];
+        const ms = d.milestones[msIndex];
 
-        if (def && date) {
+        if (def && ms?.date) {
             const msHdr = document.createElement("span");
             msHdr.style.cssText = `color:${def.color};font-weight:600;display:block;`;
             msHdr.textContent = `◆ ${def.name}`;
             nodes.push(msHdr);
-            nodes.push(this.tipRow("Date:", this.fmtFull(date)));
+            nodes.push(this.tipRow("Date:", this.fmtFull(ms.date)));
         }
 
-        this.appendExtraFieldNodes(nodes, d);
+        this.appendExtraFieldNodes(nodes, ms?.extra ?? []);
+        this.appendExtraFieldNodes(nodes, d.extraFields);
         return nodes;
     }
 
