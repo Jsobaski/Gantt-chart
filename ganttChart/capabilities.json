@@ -82,6 +82,34 @@
             "properties": {
                 "fill": { "type": { "fill": { "solid": { "color": true } } } }
             }
+        },
+        "labelText": {
+            "properties": {
+                "fontFamily": { "type": { "formatting": { "fontFamily": true } } },
+                "fontSize":   { "type": { "numeric": true } },
+                "color":      { "type": { "fill": { "solid": { "color": true } } } }
+            }
+        },
+        "legendText": {
+            "properties": {
+                "fontFamily": { "type": { "formatting": { "fontFamily": true } } },
+                "fontSize":   { "type": { "numeric": true } },
+                "color":      { "type": { "fill": { "solid": { "color": true } } } }
+            }
+        },
+        "filterText": {
+            "properties": {
+                "fontFamily": { "type": { "formatting": { "fontFamily": true } } },
+                "fontSize":   { "type": { "numeric": true } },
+                "color":      { "type": { "fill": { "solid": { "color": true } } } }
+            }
+        },
+        "headerText": {
+            "properties": {
+                "fontFamily": { "type": { "formatting": { "fontFamily": true } } },
+                "fontSize":   { "type": { "numeric": true } },
+                "color":      { "type": { "fill": { "solid": { "color": true } } } }
+            }
         }
     },
     "privileges": []

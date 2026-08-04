@@ -111,6 +111,25 @@ export class Visual implements IVisual {
     private showQuarterLane = true;
     private showMonthLane = true;
 
+    // Per-section text styling (defaults overridden by format panel). Anything
+    // not covered by these four groups (e.g. tooltip text, the empty-state
+    // message) still falls back to the global bgColor/textColor pair above.
+    private labelFontFamily = "Arial, sans-serif";
+    private labelFontSize = 11.5;
+    private labelColor = "#F6F6F6";
+
+    private legendFontFamily = "Arial, sans-serif";
+    private legendFontSize = 10.5;
+    private legendColor = "#F6F6F6";
+
+    private filterFontFamily = "Arial, sans-serif";
+    private filterFontSize = 11;
+    private filterColor = "#F6F6F6";
+
+    private headerFontFamily = "Arial, sans-serif";
+    private headerFontSize = 10.5;
+    private headerColor = "#F6F6F6";
+
     // Colors — every value below is a real swatch from the ACE Visual Design Guide
     // (no invented tints). Dark Blue (#193661) is the true documented brand dark,
     // used as the canvas and chrome (toolbar/header/label column all match the
@@ -200,6 +219,26 @@ export class Visual implements IVisual {
         this.showYearLane = s.showYearLane.value;
         this.showQuarterLane = s.showQuarterLane.value;
         this.showMonthLane = s.showMonthLane.value;
+
+        const lt = this.formattingSettings.labelText;
+        this.labelFontFamily = lt.fontFamily.value || this.labelFontFamily;
+        this.labelFontSize = lt.fontSize.value ?? this.labelFontSize;
+        this.labelColor = lt.color.value.value || this.labelColor;
+
+        const lg = this.formattingSettings.legendText;
+        this.legendFontFamily = lg.fontFamily.value || this.legendFontFamily;
+        this.legendFontSize = lg.fontSize.value ?? this.legendFontSize;
+        this.legendColor = lg.color.value.value || this.legendColor;
+
+        const ft = this.formattingSettings.filterText;
+        this.filterFontFamily = ft.fontFamily.value || this.filterFontFamily;
+        this.filterFontSize = ft.fontSize.value ?? this.filterFontSize;
+        this.filterColor = ft.color.value.value || this.filterColor;
+
+        const ht = this.formattingSettings.headerText;
+        this.headerFontFamily = ht.fontFamily.value || this.headerFontFamily;
+        this.headerFontSize = ht.fontSize.value ?? this.headerFontSize;
+        this.headerColor = ht.color.value.value || this.headerColor;
     }
 
     // FY starts Oct 1: Oct-Dec of calendar year Y belong to FY(Y+1).
@@ -642,7 +681,7 @@ export class Visual implements IVisual {
         ];
         legendItems.forEach(item => {
             const chip = document.createElement("span");
-            chip.style.cssText = "display:flex;align-items:center;gap:4px;font-size:10.5px;";
+            chip.style.cssText = `display:flex;align-items:center;gap:4px;font-size:${this.legendFontSize}px;color:${this.legendColor};font-family:${this.legendFontFamily};`;
             const swatch = document.createElement("span");
             if (item.isBar) {
                 swatch.style.cssText = `display:inline-block;width:18px;height:9px;background:${item.color};border-radius:2px;flex-shrink:0;`;
@@ -656,14 +695,15 @@ export class Visual implements IVisual {
         controls.appendChild(legend);
 
         const inputStyle = [
-            `background:#112840`, `color:${this.textColor}`,
+            `background:#112840`, `color:${this.filterColor}`,
             "border:1px solid #2a5080", "border-radius:4px",
-            "padding:2px 6px", "font-size:11px", "outline:none"
+            "padding:2px 6px", `font-size:${this.filterFontSize}px`, "outline:none",
+            `font-family:${this.filterFontFamily}`
         ].join(";");
 
         const mkLabel = (txt: string, inputEl: HTMLInputElement) => {
             const lbl = document.createElement("label");
-            lbl.style.cssText = "display:flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap;";
+            lbl.style.cssText = `display:flex;align-items:center;gap:5px;font-size:${this.filterFontSize}px;white-space:nowrap;color:${this.filterColor};font-family:${this.filterFontFamily};`;
             lbl.textContent = txt;
             lbl.appendChild(inputEl);
             return lbl;
@@ -682,9 +722,10 @@ export class Visual implements IVisual {
         toInput.style.cssText = inputStyle;
 
         const btnStyle = [
-            "background:#112840", `color:${this.textColor}`,
+            "background:#112840", `color:${this.filterColor}`,
             "border:1px solid #2a5080", "border-radius:4px",
-            "padding:3px 10px", "font-size:11px", "cursor:pointer"
+            "padding:3px 10px", `font-size:${this.filterFontSize}px`, "cursor:pointer",
+            `font-family:${this.filterFontFamily}`
         ].join(";");
 
         const resetBtn = document.createElement("button");
@@ -907,7 +948,7 @@ export class Visual implements IVisual {
             else qSpans.push({ label: qLabel, x1, x2 });
         });
 
-        const drawSpanLane = (spans: Span[], laneY: number, laneH: number, fontSize: string, fontWeight: string, opacity: number) => {
+        const drawSpanLane = (spans: Span[], laneY: number, laneH: number, fontWeight: string, opacity: number) => {
             spans.forEach(sp => {
                 monthSvg.append("line")
                     .attr("x1", sp.x1).attr("y1", laneY)
@@ -919,9 +960,9 @@ export class Visual implements IVisual {
                         .attr("x", sp.x1 + w / 2)
                         .attr("y", laneY + laneH / 2 + 4)
                         .attr("text-anchor", "middle")
-                        .attr("fill", this.textColor)
-                        .attr("font-size", fontSize)
-                        .attr("font-family", "Arial, sans-serif")
+                        .attr("fill", this.headerColor)
+                        .attr("font-size", `${this.headerFontSize}px`)
+                        .attr("font-family", this.headerFontFamily)
                         .attr("font-weight", fontWeight)
                         .attr("opacity", opacity)
                         .text(sp.label);
@@ -933,8 +974,8 @@ export class Visual implements IVisual {
                 .attr("stroke", this.gridColor).attr("stroke-width", 0.6);
         };
 
-        if (this.showYearLane) drawSpanLane(yearSpans, 0, this.FY_LANE_HEIGHT, "10.5px", "700", 1);
-        if (this.showQuarterLane) drawSpanLane(qSpans, quarterLaneY, this.QUARTER_LANE_HEIGHT, "9.5px", "600", 0.85);
+        if (this.showYearLane) drawSpanLane(yearSpans, 0, this.FY_LANE_HEIGHT, "700", 1);
+        if (this.showQuarterLane) drawSpanLane(qSpans, quarterLaneY, this.QUARTER_LANE_HEIGHT, "600", 0.85);
 
         if (this.showMonthLane) months.forEach(m => {
             const x = xScale(m);
@@ -945,9 +986,9 @@ export class Visual implements IVisual {
             monthSvg.append("text")
                 .attr("x", x + 5)
                 .attr("y", monthLaneY + this.MONTH_LANE_HEIGHT / 2 + 4)
-                .attr("fill", this.textColor)
-                .attr("font-size", "11px")
-                .attr("font-family", "Arial, sans-serif")
+                .attr("fill", this.headerColor)
+                .attr("font-size", `${this.headerFontSize}px`)
+                .attr("font-family", this.headerFontFamily)
                 .attr("font-weight", "600")
                 .text(d3.timeFormat("%b %Y")(m));
         });
@@ -963,11 +1004,11 @@ export class Visual implements IVisual {
                 div.style.cssText = [
                     `height:${rowHeight}px`,
                     "display:flex", "align-items:center",
-                    "padding:0 10px", "font-weight:700", "font-size:12px",
+                    "padding:0 10px", "font-weight:700", `font-size:${this.labelFontSize}px`,
                     "letter-spacing:0.06em", "text-transform:uppercase",
                     `background:${this.locationBgColor}`,
                     `border-bottom:1px solid ${this.gridColor}`,
-                    `color:${this.textColor}`, "cursor:default"
+                    `color:${this.labelColor}`, `font-family:${this.labelFontFamily}`, "cursor:default"
                 ].join(";");
                 div.textContent = `▶  ${row.name}`;
                 labelCol.appendChild(div);
@@ -992,7 +1033,8 @@ export class Visual implements IVisual {
                     `height:${rowHeight}px`,
                     "display:flex", "align-items:center",
                     "padding:0 6px 0 22px",
-                    "font-size:11.5px",
+                    `font-size:${this.labelFontSize}px`, `font-family:${this.labelFontFamily}`,
+                    `color:${this.labelColor}`,
                     `border-bottom:1px solid ${this.gridColor}`,
                     "cursor:default", `background:${rowBg}`,
                     "white-space:nowrap", "overflow:hidden"
@@ -1000,7 +1042,7 @@ export class Visual implements IVisual {
                 div.title = `${d.location} › ${d.projectName}`;
 
                 const marker = document.createElement("span");
-                marker.style.cssText = `color:${this.textColor};opacity:0.45;margin-right:5px;font-size:10px;flex-shrink:0;`;
+                marker.style.cssText = `color:${this.labelColor};opacity:0.45;margin-right:5px;font-size:10px;flex-shrink:0;`;
                 marker.textContent = "□";
                 div.appendChild(marker);
 

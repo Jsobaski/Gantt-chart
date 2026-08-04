@@ -95,10 +95,120 @@ class GanttConfigCard extends FormattingSettingsCard {
     ];
 }
 
+class LabelTextCard extends FormattingSettingsCard {
+    fontFamily = new formattingSettings.FontPicker({
+        name: "fontFamily",
+        displayName: "Font",
+        value: "Arial, sans-serif"
+    });
+    fontSize = new formattingSettings.NumUpDown({
+        name: "fontSize",
+        displayName: "Font Size (px)",
+        value: 11.5,
+        options: {
+            minValue: { type: powerbi.visuals.ValidatorType.Min, value: 8 },
+            maxValue: { type: powerbi.visuals.ValidatorType.Max, value: 20 }
+        }
+    });
+    color = new formattingSettings.ColorPicker({
+        name: "color",
+        displayName: "Text Color",
+        value: { value: "#F6F6F6" }
+    });
+    name: string = "labelText";
+    displayName: string = "Location / Project Names";
+    slices: Array<FormattingSettingsSlice> = [this.fontFamily, this.fontSize, this.color];
+}
+
+class LegendTextCard extends FormattingSettingsCard {
+    fontFamily = new formattingSettings.FontPicker({
+        name: "fontFamily",
+        displayName: "Font",
+        value: "Arial, sans-serif"
+    });
+    fontSize = new formattingSettings.NumUpDown({
+        name: "fontSize",
+        displayName: "Font Size (px)",
+        value: 10.5,
+        options: {
+            minValue: { type: powerbi.visuals.ValidatorType.Min, value: 7 },
+            maxValue: { type: powerbi.visuals.ValidatorType.Max, value: 18 }
+        }
+    });
+    color = new formattingSettings.ColorPicker({
+        name: "color",
+        displayName: "Text Color",
+        value: { value: "#F6F6F6" }
+    });
+    name: string = "legendText";
+    displayName: string = "Legend";
+    slices: Array<FormattingSettingsSlice> = [this.fontFamily, this.fontSize, this.color];
+}
+
+class FilterTextCard extends FormattingSettingsCard {
+    fontFamily = new formattingSettings.FontPicker({
+        name: "fontFamily",
+        displayName: "Font",
+        value: "Arial, sans-serif"
+    });
+    fontSize = new formattingSettings.NumUpDown({
+        name: "fontSize",
+        displayName: "Font Size (px)",
+        value: 11,
+        options: {
+            minValue: { type: powerbi.visuals.ValidatorType.Min, value: 8 },
+            maxValue: { type: powerbi.visuals.ValidatorType.Max, value: 18 }
+        }
+    });
+    color = new formattingSettings.ColorPicker({
+        name: "color",
+        displayName: "Text Color",
+        value: { value: "#F6F6F6" }
+    });
+    name: string = "filterText";
+    displayName: string = "Date Filters";
+    slices: Array<FormattingSettingsSlice> = [this.fontFamily, this.fontSize, this.color];
+}
+
+class HeaderTextCard extends FormattingSettingsCard {
+    fontFamily = new formattingSettings.FontPicker({
+        name: "fontFamily",
+        displayName: "Font",
+        value: "Arial, sans-serif"
+    });
+    fontSize = new formattingSettings.NumUpDown({
+        name: "fontSize",
+        displayName: "Font Size (px)",
+        value: 10.5,
+        options: {
+            minValue: { type: powerbi.visuals.ValidatorType.Min, value: 7 },
+            maxValue: { type: powerbi.visuals.ValidatorType.Max, value: 18 }
+        }
+    });
+    color = new formattingSettings.ColorPicker({
+        name: "color",
+        displayName: "Text Color",
+        value: { value: "#F6F6F6" }
+    });
+    name: string = "headerText";
+    displayName: string = "Date Rows (Year / Quarter / Month)";
+    slices: Array<FormattingSettingsSlice> = [this.fontFamily, this.fontSize, this.color];
+}
+
 export class VisualFormattingSettingsModel extends FormattingSettingsModel {
     public ganttConfig: GanttConfigCard = new GanttConfigCard();
+    public labelText: LabelTextCard = new LabelTextCard();
+    public legendText: LegendTextCard = new LegendTextCard();
+    public filterText: FilterTextCard = new FilterTextCard();
+    public headerText: HeaderTextCard = new HeaderTextCard();
     // Typed broadly because visual.ts appends a dynamically-built "Series Colors"
     // card (a plain formattingSettings.SimpleCard) whose slice count varies with
     // however many bar/milestone fields are currently bound.
-    cards: Array<formattingSettings.SimpleCard> = [this.ganttConfig];
+    cards: Array<formattingSettings.SimpleCard> = [
+        this.ganttConfig,
+        this.labelText,
+        this.legendText,
+        this.filterText,
+        this.headerText
+    ];
 }
