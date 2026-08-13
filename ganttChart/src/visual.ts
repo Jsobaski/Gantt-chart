@@ -75,7 +75,7 @@ export class Visual implements IVisual {
     private userDateTo: Date | null = null;
     // Live viewer toggle (not a persisted report setting) so anyone looking at the
     // report can flip between fiscal-year and calendar-year framing on the fly.
-    private useFiscalYear = true;
+    private useFiscalYear = false;
 
     private clearEl(el: HTMLElement): void {
         while (el.firstChild) el.removeChild(el.firstChild);
@@ -587,6 +587,34 @@ export class Visual implements IVisual {
         return { rowHeight, contentH, milestoneLaneH, laneGap, barsLaneH };
     }
 
+    private measureCtx: CanvasRenderingContext2D | null = null;
+
+    // Greedy word-wrap line count, mirroring the browser's own line-breaking so the
+    // row height we reserve matches what "white-space:normal" will actually render.
+    private wrapLineCount(text: string, maxWidth: number, fontSize: number, fontFamily: string): number {
+        if (!text) return 1;
+        if (!this.measureCtx) {
+            this.measureCtx = document.createElement("canvas").getContext("2d");
+        }
+        const ctx = this.measureCtx;
+        if (!ctx) return 1;
+        ctx.font = `${fontSize}px ${fontFamily}`;
+        const words = text.split(/\s+/).filter(Boolean);
+        if (words.length === 0) return 1;
+        let lines = 1;
+        let lineText = words[0];
+        for (let i = 1; i < words.length; i++) {
+            const candidate = `${lineText} ${words[i]}`;
+            if (ctx.measureText(candidate).width > maxWidth) {
+                lines++;
+                lineText = words[i];
+            } else {
+                lineText = candidate;
+            }
+        }
+        return lines;
+    }
+
     // Header lanes (Year/Quarter/Month) can each be hidden via the Format pane, so
     // the header's total height and each lane's vertical offset are computed fresh
     // per render instead of being a fixed constant.
@@ -618,7 +646,27 @@ export class Visual implements IVisual {
         const { headerHeight, quarterY: quarterLaneY, monthY: monthLaneY } = this.computeHeaderMetrics();
 
         const timelineWidth = Math.max(W - this.LABEL_WIDTH, 500);
-        const totalBodyHeight = displayRows.length * rowHeight;
+
+        // Long location/project names wrap onto extra lines instead of being cut off,
+        // so each row's height is its own max of the bars/milestone lane height and
+        // whatever the wrapped label needs — most rows stay at the uniform base height.
+        const PROJECT_LABEL_WIDTH = this.LABEL_WIDTH - 43; // 22px+6px padding, 15px marker+gap
+        const LOCATION_LABEL_WIDTH = this.LABEL_WIDTH - 50; // 20px padding, "▶  " prefix, letter-spacing
+        const labelLineHeight = Math.ceil(this.labelFontSize * 1.3);
+        const rowHeights: number[] = displayRows.map(row => {
+            const [text, maxWidth] = row.type === "location"
+                ? [`▶  ${row.name}`, LOCATION_LABEL_WIDTH]
+                : [row.data.projectName || row.data.location, PROJECT_LABEL_WIDTH];
+            const lines = this.wrapLineCount(text, maxWidth, this.labelFontSize, this.labelFontFamily);
+            const neededLabelHeight = lines * labelLineHeight + this.ROW_V_PADDING;
+            return Math.max(rowHeight, neededLabelHeight);
+        });
+        const rowY: number[] = [];
+        {
+            let acc = 0;
+            rowHeights.forEach(h => { rowY.push(acc); acc += h; });
+        }
+        const totalBodyHeight = rowHeights.reduce((sum, h) => sum + h, 0);
 
         // ── Outer wrapper ────────────────────────────────────────────────
         const outer = document.createElement("div");
@@ -748,7 +796,10 @@ export class Visual implements IVisual {
         const fyInput = document.createElement("input");
         fyInput.type = "number";
         fyInput.style.cssText = inputStyle + "width:64px;";
-        fyInput.value = String(this.periodYearOf(this.userDateTo || dateTo));
+        // dateTo is always the exclusive first-instant of the NEXT period, so deriving the
+        // displayed year from it would show one year ahead of what's actually on screen.
+        // dateFrom is the inclusive start of the current period, so it always resolves correctly.
+        fyInput.value = String(this.periodYearOf(this.userDateFrom || dateFrom));
 
         const quarterSelect = document.createElement("select");
         quarterSelect.style.cssText = inputStyle;
@@ -995,31 +1046,33 @@ export class Visual implements IVisual {
 
         // ── Row rendering ─────────────────────────────────────────────────
         displayRows.forEach((row, idx) => {
-            const y = idx * rowHeight;
+            const y = rowY[idx];
+            const thisRowHeight = rowHeights[idx];
             const isEvenRow = idx % 2 === 0;
 
             if (row.type === "location") {
                 // ── Location header ─────────────────────────────────────
                 const div = document.createElement("div");
                 div.style.cssText = [
-                    `height:${rowHeight}px`,
+                    `height:${thisRowHeight}px`,
                     "display:flex", "align-items:center",
                     "padding:0 10px", "font-weight:700", `font-size:${this.labelFontSize}px`,
                     "letter-spacing:0.06em", "text-transform:uppercase",
                     `background:${this.locationBgColor}`,
                     `border-bottom:1px solid ${this.gridColor}`,
-                    `color:${this.labelColor}`, `font-family:${this.labelFontFamily}`, "cursor:default"
+                    `color:${this.labelColor}`, `font-family:${this.labelFontFamily}`, "cursor:default",
+                    "white-space:normal", "overflow-wrap:break-word", "line-height:1.3"
                 ].join(";");
                 div.textContent = `▶  ${row.name}`;
                 labelCol.appendChild(div);
 
                 svg.append("rect")
                     .attr("x", 0).attr("y", y)
-                    .attr("width", timelineWidth).attr("height", rowHeight)
+                    .attr("width", timelineWidth).attr("height", thisRowHeight)
                     .attr("fill", this.locationBgColor);
                 svg.append("line")
-                    .attr("x1", 0).attr("y1", y + rowHeight)
-                    .attr("x2", timelineWidth).attr("y2", y + rowHeight)
+                    .attr("x1", 0).attr("y1", y + thisRowHeight)
+                    .attr("x2", timelineWidth).attr("y2", y + thisRowHeight)
                     .attr("stroke", this.gridColor).attr("stroke-width", 0.6);
 
             } else {
@@ -1030,24 +1083,23 @@ export class Visual implements IVisual {
                 // Label div
                 const div = document.createElement("div");
                 div.style.cssText = [
-                    `height:${rowHeight}px`,
+                    `height:${thisRowHeight}px`,
                     "display:flex", "align-items:center",
                     "padding:0 6px 0 22px",
                     `font-size:${this.labelFontSize}px`, `font-family:${this.labelFontFamily}`,
                     `color:${this.labelColor}`,
                     `border-bottom:1px solid ${this.gridColor}`,
-                    "cursor:default", `background:${rowBg}`,
-                    "white-space:nowrap", "overflow:hidden"
+                    "cursor:default", `background:${rowBg}`
                 ].join(";");
                 div.title = `${d.location} › ${d.projectName}`;
 
                 const marker = document.createElement("span");
-                marker.style.cssText = `color:${this.labelColor};opacity:0.45;margin-right:5px;font-size:10px;flex-shrink:0;`;
+                marker.style.cssText = `color:${this.labelColor};opacity:0.45;margin-right:5px;font-size:10px;flex-shrink:0;align-self:flex-start;margin-top:2px;`;
                 marker.textContent = "□";
                 div.appendChild(marker);
 
                 const nameSpan = document.createElement("span");
-                nameSpan.style.cssText = "overflow:hidden;text-overflow:ellipsis;";
+                nameSpan.style.cssText = "white-space:normal;overflow-wrap:break-word;word-break:break-word;line-height:1.3;";
                 nameSpan.textContent = d.projectName || d.location;
                 div.appendChild(nameSpan);
                 labelCol.appendChild(div);
@@ -1055,15 +1107,16 @@ export class Visual implements IVisual {
                 // Row background stripe on SVG
                 svg.append("rect")
                     .attr("x", 0).attr("y", y)
-                    .attr("width", timelineWidth).attr("height", rowHeight)
+                    .attr("width", timelineWidth).attr("height", thisRowHeight)
                     .attr("fill", rowBg);
                 svg.append("line")
-                    .attr("x1", 0).attr("y1", y + rowHeight)
-                    .attr("x2", timelineWidth).attr("y2", y + rowHeight)
+                    .attr("x1", 0).attr("y1", y + thisRowHeight)
+                    .attr("x2", timelineWidth).attr("y2", y + thisRowHeight)
                     .attr("stroke", this.gridColor).attr("stroke-width", 0.3);
 
                 // Milestone lane centered above the bars lane, whole block vertically centered in the row
-                const contentTop = y + (rowHeight - contentH) / 2;
+                // (using thisRowHeight, not the uniform base, so wrapped-label rows still center the bars)
+                const contentTop = y + (thisRowHeight - contentH) / 2;
                 const milestoneCenterY = contentTop + this.MILESTONE_RADIUS;
                 const barsTop = contentTop + milestoneLaneH + laneGap;
 
