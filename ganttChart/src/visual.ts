@@ -10,7 +10,9 @@ import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
 import IVisual = powerbi.extensibility.visual.IVisual;
 import IVisualEventService = powerbi.extensibility.IVisualEventService;
 import IVisualHost = powerbi.extensibility.visual.IVisualHost;
+import ISelectionManager = powerbi.extensibility.ISelectionManager;
 import DataView = powerbi.DataView;
+import DataViewTable = powerbi.DataViewTable;
 import IViewport = powerbi.IViewport;
 
 import { VisualFormattingSettingsModel } from "./settings";
@@ -48,6 +50,11 @@ interface GanttRow {
     bars: BarValue[];
     // Shown on every bar/milestone tooltip ("Additional Tooltip Fields")
     extraFields: TooltipField[];
+    // Index into the raw dataView.table.rows this row came from — some raw rows are
+    // skipped (blank location/project, no bar/milestone data), so this can't be inferred
+    // from GanttRow array position. Needed to rebuild a table-row-scoped SelectionId
+    // for right-click drill-through.
+    rawRowIndex: number;
 }
 
 interface LocationGroup {
@@ -73,6 +80,14 @@ export class Visual implements IVisual {
     private barDefs: SeriesDef[] = [];
     private userDateFrom: Date | null = null;
     private userDateTo: Date | null = null;
+    // Right-click drill-through support. dataTable is the raw table backing the current
+    // dataView (needed to rebuild row-scoped SelectionIds); the two query-name arrays are
+    // aligned with barDefs/milestoneDefs and hold the name-matched "Series Drill-through
+    // Field" column for that series, if one was bound.
+    private selectionManager: ISelectionManager;
+    private dataTable: DataViewTable | null = null;
+    private barDrillQueryNames: (string | undefined)[] = [];
+    private msDrillQueryNames: (string | undefined)[] = [];
     // Live viewer toggle (not a persisted report setting) so anyone looking at the
     // report can flip between fiscal-year and calendar-year framing on the fly.
     private useFiscalYear = false;
@@ -161,6 +176,7 @@ export class Visual implements IVisual {
     constructor(options: VisualConstructorOptions) {
         this.events = options.host.eventService;
         this.host = options.host;
+        this.selectionManager = options.host.createSelectionManager();
         this.formattingSettingsService = new FormattingSettingsService();
         this.container = options.element;
         this.container.style.overflow = "hidden";
@@ -333,6 +349,22 @@ export class Visual implements IVisual {
         return card;
     }
 
+    // Right-click a bar/milestone to open Power BI's native context menu, offering
+    // "Drill through" to any target page whose drillthrough field matches a value
+    // present on this row. Chaining withMeasure() after withTable() narrows the
+    // selection to (this row, this specific column) instead of the whole row, so a
+    // project with values in multiple systems (e.g. both P6 and Maximo) still only
+    // offers the drill-through relevant to the specific bar/milestone clicked —
+    // when no drill-through field is bound for that series, this falls back to
+    // plain row identity.
+    private showSeriesContextMenu(ev: MouseEvent, rawRowIndex: number, fieldQueryName: string | undefined): void {
+        if (!this.dataTable) return;
+        const builder = this.host.createSelectionIdBuilder().withTable(this.dataTable, rawRowIndex);
+        if (fieldQueryName) builder.withMeasure(fieldQueryName);
+        const selectionId = builder.createSelectionId();
+        this.selectionManager.showContextMenu(selectionId, { x: ev.clientX, y: ev.clientY });
+    }
+
     private parseSingleValue(val: powerbi.PrimitiveValue): Date | null {
         if (val === null || val === undefined || val === "") return null;
         if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
@@ -367,9 +399,12 @@ export class Visual implements IVisual {
     // exactly as already required to fix the earlier date-hierarchy bugs.
     private parseRows(dataView: DataView): GanttRow[] {
         const table = dataView.table;
+        this.dataTable = table || null;
         if (!table?.rows?.length) {
             this.milestoneDefs = [];
             this.barDefs = [];
+            this.barDrillQueryNames = [];
+            this.msDrillQueryNames = [];
             return [];
         }
 
@@ -394,6 +429,7 @@ export class Visual implements IVisual {
         const barFinishCols: { idx: number; name: string }[] = [];
         const tooltipCols: { idx: number; name: string }[] = [];
         const seriesTooltipCols: { idx: number; name: string }[] = [];
+        const drillCols: { idx: number; name: string }[] = [];
         columns.forEach((col, i) => {
             const name = col.displayName || col.queryName || `Field ${i}`;
             if (col.roles?.["milestoneDate"]) milestoneCols.push({ idx: i, name });
@@ -401,6 +437,7 @@ export class Visual implements IVisual {
             if (col.roles?.["barFinish"]) barFinishCols.push({ idx: i, name });
             if (col.roles?.["tooltipFields"]) tooltipCols.push({ idx: i, name });
             if (col.roles?.["seriesTooltipFields"]) seriesTooltipCols.push({ idx: i, name });
+            if (col.roles?.["seriesDrillthroughField"]) drillCols.push({ idx: i, name });
         });
 
         // Bar starts/finishes are paired positionally: 1st Start field with 1st Finish
@@ -440,15 +477,13 @@ export class Visual implements IVisual {
             return out;
         };
 
-        // Each "Series-Specific Tooltip Fields" column is attached to exactly one
-        // bar or milestone series by name: rename the field (right-click > Rename
-        // for this visual) so it STARTS WITH that series' exact name. If several
-        // series names match, the longest (most specific) match wins; if none
-        // match, the field is silently dropped rather than shown everywhere.
-        const barSeriesTooltipCols: { idx: number; name: string }[][] = this.barDefs.map(() => []);
-        const msSeriesTooltipCols: { idx: number; name: string }[][] = this.milestoneDefs.map(() => []);
-        seriesTooltipCols.forEach(col => {
-            const lname = col.name.toLowerCase();
+        // A field is attached to exactly one bar or milestone series by name: rename it
+        // (right-click > Rename for this visual) so it STARTS WITH that series' exact
+        // name. If several series names match, the longest (most specific) match wins;
+        // if none match, the field is dropped rather than applied to every series. Used
+        // for both "Series-Specific Tooltip Fields" and the "Series Drill-through Field".
+        const matchSeries = (name: string): { type: "bar" | "milestone"; index: number } | null => {
+            const lname = name.toLowerCase();
             let bestType: "bar" | "milestone" | null = null;
             let bestIndex = -1;
             let bestLen = -1;
@@ -462,9 +497,28 @@ export class Visual implements IVisual {
                     bestType = "milestone"; bestIndex = i; bestLen = def.name.length;
                 }
             });
-            if (bestType === "bar") barSeriesTooltipCols[bestIndex].push(col);
-            else if (bestType === "milestone") msSeriesTooltipCols[bestIndex].push(col);
+            return bestType ? { type: bestType, index: bestIndex } : null;
+        };
+
+        const barSeriesTooltipCols: { idx: number; name: string }[][] = this.barDefs.map(() => []);
+        const msSeriesTooltipCols: { idx: number; name: string }[][] = this.milestoneDefs.map(() => []);
+        seriesTooltipCols.forEach(col => {
+            const match = matchSeries(col.name);
+            if (match?.type === "bar") barSeriesTooltipCols[match.index].push(col);
+            else if (match?.type === "milestone") msSeriesTooltipCols[match.index].push(col);
         });
+
+        // One drill-through field per series (last match wins if more than one is bound
+        // to the same series name — an edge case the user controls via naming).
+        const barDrillColIdx: (number | undefined)[] = this.barDefs.map(() => undefined);
+        const msDrillColIdx: (number | undefined)[] = this.milestoneDefs.map(() => undefined);
+        drillCols.forEach(col => {
+            const match = matchSeries(col.name);
+            if (match?.type === "bar") barDrillColIdx[match.index] = col.idx;
+            else if (match?.type === "milestone") msDrillColIdx[match.index] = col.idx;
+        });
+        this.barDrillQueryNames = barDrillColIdx.map(idx => idx !== undefined ? (columns[idx].queryName || columns[idx].displayName) : undefined);
+        this.msDrillQueryNames = msDrillColIdx.map(idx => idx !== undefined ? (columns[idx].queryName || columns[idx].displayName) : undefined);
 
         const getSeriesExtra = (row: powerbi.DataViewTableRow, cols: { idx: number; name: string }[]): TooltipField[] => {
             const out: TooltipField[] = [];
@@ -476,7 +530,7 @@ export class Visual implements IVisual {
         };
 
         const rows: GanttRow[] = [];
-        table.rows.forEach(row => {
+        table.rows.forEach((row, rawRowIndex) => {
             const location = getString(row, "location");
             const projectName = getString(row, "projectName");
             if (!location && !projectName) return;
@@ -498,7 +552,7 @@ export class Visual implements IVisual {
             const hasMilestone = milestones.some(m => m.date !== null);
             if (!hasBar && !hasMilestone) return;
 
-            rows.push({ location, projectName, milestones, bars, extraFields: getExtraFields(row) });
+            rows.push({ location, projectName, milestones, bars, extraFields: getExtraFields(row), rawRowIndex });
         });
 
         return rows;
@@ -1158,7 +1212,11 @@ export class Visual implements IVisual {
                         showTip(this.buildBarTip(d, i), ev);
                     })
                     .on("mousemove", (ev: MouseEvent) => moveTip(ev))
-                    .on("mouseleave", () => { bar.attr("fill-opacity", 1); hideTip(); });
+                    .on("mouseleave", () => { bar.attr("fill-opacity", 1); hideTip(); })
+                    .on("contextmenu", (ev: MouseEvent) => {
+                        ev.preventDefault();
+                        this.showSeriesContextMenu(ev, d.rawRowIndex, this.barDrillQueryNames[i]);
+                    });
                 });
 
                 // ── Milestone diamonds (one lane, N diamonds across the timeline) ──
@@ -1184,6 +1242,10 @@ export class Visual implements IVisual {
                     .on("mouseleave", () => {
                         diamond.attr("stroke-width", 0.8).attr("stroke", "rgba(255,255,255,0.4)");
                         hideTip();
+                    })
+                    .on("contextmenu", (ev: MouseEvent) => {
+                        ev.preventDefault();
+                        this.showSeriesContextMenu(ev, d.rawRowIndex, this.msDrillQueryNames[i]);
                     });
                 });
             }

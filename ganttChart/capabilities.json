@@ -41,6 +41,12 @@
             "name": "seriesTooltipFields",
             "kind": "GroupingOrMeasure",
             "description": "Extra tooltip info for ONE specific bar or milestone series, not all of them. Rename the field (right-click > Rename for this visual) so its name STARTS WITH the exact series name shown in the legend — e.g. rename to \"P6 Status\" to attach it only to the P6 series' tooltip, not Maximo's."
+        },
+        {
+            "displayName": "Series Drill-through Field",
+            "name": "seriesDrillthroughField",
+            "kind": "GroupingOrMeasure",
+            "description": "The ID field used when you right-click a bar or milestone to drill through to another page — e.g. \"P6 WBS\" for the P6 series, \"Maximo Project ID\" for Maximo. Rename the field (right-click > Rename for this visual) so its name STARTS WITH the exact series name, same convention as Series-Specific Tooltip Fields. You can drag the same column in here that you already use for a series-specific tooltip field."
         }
     ],
     "dataViewMappings": [
@@ -54,7 +60,8 @@
                         { "for": { "in": "barStart" } },
                         { "for": { "in": "barFinish" } },
                         { "for": { "in": "tooltipFields" } },
-                        { "for": { "in": "seriesTooltipFields" } }
+                        { "for": { "in": "seriesTooltipFields" } },
+                        { "for": { "in": "seriesDrillthroughField" } }
                     ],
                     "dataReductionAlgorithm": {
                         "top": { "count": 2000 }
